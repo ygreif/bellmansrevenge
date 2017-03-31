@@ -8,8 +8,9 @@ from params import random_parameters, model
 
 def worker(num, params, env, train_episodes, num_attempts):
     results = []
+    print "parameters", num, "train_episodes", train_episodes, "attempts", num_attempts
     for attempt in range(num_attempts):
-        print "params", num, "attempt", attempt
+        print "parameters", num, "attempt", attempt
         q = naf.SetupNAF.setup(env, **params['naf'])
         memory = samples.Samples(10000)
         a = agent.Agent(q, memory)
@@ -38,3 +39,7 @@ def runworkers(num_params, max_iters, num_runs, max_workers):
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         r = [r for r in executor.map(helper, args)]
     return r
+
+
+if __name__ == '__main__':
+    print runworkers(20, 400, 5, 5)

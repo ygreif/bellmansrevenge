@@ -45,7 +45,7 @@ class Agent(object):
             action = q.action([samples.dict_to_tuple(state)], [(max_prod,)])[0]
             action = {'c': strat.explore(action, max_prod)}
 
-            if action['c'] <= 0:
+            if action['c'] <= 0 or max_prod <= 0:
                 return -999999
 
             utility, next_state = model.iterate(state, action)

@@ -35,9 +35,10 @@ class Agent(object):
         self.qtable = qtable
         self.memory = memory
 
-    def episode(self, model, strat, train=True):
+    def episode(self, model, strat, state=False, train=True):
         reward = 0
-        state = model.sample_state()
+        if not state:
+            state = model.sample_state()
         q = self.qtable
         for _ in range(strat.max_iters):
             max_prod = model.production.production(**state)

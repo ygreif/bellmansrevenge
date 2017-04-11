@@ -30,6 +30,9 @@ class Production(object):
     def production(self, k, z):
         return self.technology[z] * math.pow(k, self.alpha) + (1.0 - self.delta) * k
 
+    def __len__(self):
+        return len(self.technology)
+
 
 class Motion(object):
 
@@ -59,7 +62,8 @@ class GrowthEconomy(object):
         return (2, 1)
 
     def sample_state(self):
-        state = {'k': random.random(), 'z': random.randrange(1)}
+        state = {
+            'k': random.random(), 'z': random.randrange(len(self.production))}
         return state
 
     def action_loss(self, action):
@@ -70,19 +74,14 @@ class GrowthEconomy(object):
         return tf.cond(action < 0.0, tf.abs(action), 0.0) + tf.cond(action > state[0], action, 0.0)
 '''
 
-if __name__ == '__main__':
-    import numpy as np
-    vProductivity = np.array([0.9792, 0.9896, 1.0000, 1.0106, 1.0212], float)
-    mTransition = np.array([[0.9727, 0.0273, 0.0000, 0.0000, 0.0000],
-                            [0.0041, 0.9806, 0.0153, 0.0000, 0.0000],
-                            [0.0000, 0.0082, 0.9837, 0.0082, 0.0000],
-                            [0.0000, 0.0000, 0.0153, 0.9806, 0.0041],
-                            [0.0000, 0.0000, 0.0000, 0.0273, 0.9727]], float)
-    alpha = 1.0 / 3.0
-    delta = 0
-    prod = Production(alpha, delta, vProductivity)
-    motion = Motion(mTransition)
-    print prod.production(.5, 1)
-    print motion.next(1, 1)
-    economy = GrowthEconomy(LogUtility(), prod, motion)
-    print economy.iterate({'k': .5, 'z': 1}, {'c': .5})
+vProductivity = np.array([0.9792, 0.9896, 1.0000, 1.0106, 1.0212], float)
+mTransition = np.array([[0.9727, 0.0273, 0.0000, 0.0000, 0.0000],
+                        [0.0041, 0.9806, 0.0153, 0.0000, 0.0000],
+                        [0.0000, 0.00815, 0.9837, 0.00815, 0.0000],
+                        [0.0000, 0.0000, 0.0153, 0.9806, 0.0041],
+                        [0.0000, 0.0000, 0.0000, 0.0273, 0.9727]], float)
+alpha = 1.0 / 3.0
+delta = 0
+prod = Production(alpha, delta, vProductivity)
+motion = Motion(mTransition)
+jesusfv = GrowthEconomy(LogUtility(), prod, motion)

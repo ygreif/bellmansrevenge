@@ -61,4 +61,4 @@ def runworkers(num_params, max_iters, num_runs, max_workers, test_state, default
 from envs.economy import jesusfv
 if __name__ == '__main__':
     print "Starting workers from worker"
-    print runworkers(20, 400, 5, 3, {'k': .2, 'z': 1})
+    print runworkers(1, 400, 5, 3, {'k': .2, 'z': 1}, default_params=default_params)

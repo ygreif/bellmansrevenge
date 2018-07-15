@@ -81,7 +81,7 @@ mTransition = np.array([[0.9727, 0.0273, 0.0000, 0.0000, 0.0000],
                         [0.0000, 0.0000, 0.0153, 0.9806, 0.0041],
                         [0.0000, 0.0000, 0.0000, 0.0273, 0.9727]], float)
 alpha = 1.0 / 3.0
-delta = 0
+delta = 1.0
 prod = Production(alpha, delta, vProductivity)
 motion = Motion(mTransition)
 jesusfv = GrowthEconomy(LogUtility(), prod, motion)

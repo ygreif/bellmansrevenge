@@ -23,17 +23,20 @@ class SetupNAF(object):
 
         n = 100
         success = False
-        for i in range(100000):
-            states = [env.sample_state() for _ in range(n)]
-            max_prod = [(env.production.production(**state),)
-                        for state in states]
+        states = [env.sample_state() for _ in range(n)]
+        max_prod = [(env.production.production(**state),) for state in states]
+        if learningParameters['compress']:
+            targets = [(0, ) for state in states]
+        else:
             targets = [(state['k'] / 2, ) for state in states]
-            states = [(state['k'], state['z']) for state in states]
-            naf.train_actions_coldstart(states, max_prod, targets)
+        states = [(state['k'], state['z']) for state in states]
+        for i in range(100000):
             actions = naf.actions(states, max_prod)
-            if i % 100 == 0:
-                pass
-            if np.allclose(actions, targets, atol=.1):
+            naf.train_actions_coldstart(states, max_prod, targets)
+            if i % 10000 == 0:
+                print "action", [a[0] for a in actions[0:10]]
+                print "target", [t[0] for t in targets[0:10]]
+            if np.allclose(actions, targets, atol=.2):
                 success = True
                 break
         if not success:
@@ -43,21 +46,19 @@ class SetupNAF(object):
         n = 100
         for i in range(50000):
             states = [env.sample_state() for _ in range(n)]
-            targets = [(-10.0 + 0 * state['k'] * 10, ) for state in states]
+            targets = [(-10.0 + state['k'] * .01, ) for state in states]
             states = [(state['k'], state['z']) for state in states]
             naf.train_values_coldstart(states, targets)
             values = naf.value(states)
-            if i % 100 == 0:
+            if i % 10000 == 0:
                 pass
-#                print "action", values[0:10]
-#                print "target", targets[0:10]
-            if np.allclose(values, targets, atol=.1):
+                print "action", values[0:10]
+                print "target", targets[0:10]
+            if np.allclose(values, targets, atol=.2):
                 success = True
                 break
         if not success:
             print "WARNING values did not converge"
-
-#        print naf.actions(states)
         return naf
 
 
@@ -69,6 +70,7 @@ class NAFApproximation(object):
         return tf.matmul(L, tf.transpose(L))
 
     def __init__(self, nnv, nnp, nnq, actiondim, learning_rate, discount, compress, keep_prob=1):
+        self.beta = discount
         self.discount = tf.constant(discount, dtype=tf.float32)
         self.x = nnv.x
 
@@ -93,7 +95,7 @@ class NAFApproximation(object):
         coldstart_loss = tf.reduce_sum(
             tf.square(self.target_value - self.v))
         self.coldstart_values = tf.train.AdamOptimizer(
-            learning_rate=.01).minimize(coldstart_loss)
+            learning_rate=.1).minimize(coldstart_loss)
 
     def _setup_p_calculation(self, nn, actiondim):
         mask = np.ones((actiondim, actiondim))
@@ -109,6 +111,7 @@ class NAFApproximation(object):
         self.max_prod = tf.placeholder(tf.float32, [None, 1], name="max_prod")
 
         self.qx = nn.x
+        self.qout = nn.out
         if compress:
             self.mu = ((tf.tanh(nn.out) + 1.0) / 2.0) * self.max_prod
         else:
@@ -123,9 +126,10 @@ class NAFApproximation(object):
         # coldstart action
         self.target_action = tf.placeholder(
             tf.float32, [None, actiondim], name="target_action")
-        coldstart_loss = tf.reduce_sum(tf.square(self.target_action - self.mu))
+        coldstart_loss = tf.reduce_sum(
+            tf.square(self.target_action - self.qout))
         self.coldstart_actions = tf.train.AdamOptimizer(
-            learning_rate=.01).minimize(coldstart_loss)
+            learning_rate=.001).minimize(coldstart_loss)
 
     def _setup_next_q_calulcation(self):
         self.r = tf.placeholder(tf.float32, [None, 1], name="reward")
@@ -137,7 +141,7 @@ class NAFApproximation(object):
         self.actionloss = tf.reduce_sum(tf.abs(tf.to_float(tf.greater(self.mu, 0.8 * self.max_prod)) * self.mu + tf.to_float(tf.less(
             self.mu, .2 * self.max_prod)) * (.2 * self.max_prod - self.mu))) * 99999999
         self.loss = tf.reduce_sum(
-            tf.square(self.target - self.Q) + self.actionloss)
+            tf.square(self.target - self.Q))
 
         self.train_step = tf.train.AdamOptimizer(
             learning_rate=learning_rate).minimize(self.loss)
@@ -205,8 +209,9 @@ class NAFApproximation(object):
         plt.plot([s[0] for s in x], max_prod, label="max")
         plt.plot([s[0] for s in x], best, label="best")
         plt.title("Best Actions")
-        plt.waitforbuttonpress(0)
-        plt.close()
+ #       plt.waitforbuttonpress(0)
+        # plt.close()
+        return plt
 
     def renderA(self):
         states = [(x, 0) for x in np.arange(.1, 1.1, .25)]

@@ -22,48 +22,50 @@ class SetupNAF(object):
             indim, pdim, x=x, **nnpParameters)
         naf = NAFApproximation(
             nnv, nnp, nnq, actiondim, **learningParameters)
-
-        # initialize NAF so actions are in range
-
-        n = 100
-        success = False
-        states = [env.sample_state() for _ in range(n)]
-        max_prod = [(env.production.production(**state),) for state in states]
-        if learningParameters['compress']:
-            targets = [(0, ) for state in states]
-        else:
-            targets = [(state['k'] / 2, ) for state in states]
-        states = [(state['k'], state['z']) for state in states]
-        for i in range(100000):
-            actions = naf.actions(states, max_prod)
-            naf.train_actions_coldstart(states, max_prod, targets)
-            if i % 10000 == 0:
-                print "action", [a[0] for a in actions[0:10]]
-                print "target", [t[0] for t in targets[0:10]]
-            if np.allclose(actions, targets, atol=.2):
-                success = True
-                break
-        if not success:
-            print "WARNING actions did not converge"
-            print naf.actions(states, max_prod)[0:5]
-        success = False
-        n = 100
-        for i in range(50000):
-            states = [env.sample_state() for _ in range(n)]
-            targets = [(-10.0 + state['k'] * .01, ) for state in states]
-            states = [(state['k'], state['z']) for state in states]
-            naf.train_values_coldstart(states, targets)
-            values = naf.value(states)
-            if i % 10000 == 0:
-                pass
-                print "action", values[0:10]
-                print "target", targets[0:10]
-            if np.allclose(values, targets, atol=.2):
-                success = True
-                break
-        if not success:
-            print "WARNING values did not converge"
         return naf
+
+
+def coldStart(naf, coldstart_len, n_examples):
+    # initialize NAF so actions are in range
+    n = 100
+    success = False
+    states = [env.sample_state() for _ in range(n)]
+    max_prod = [(env.production.production(**state),) for state in states]
+    if learningParameters['compress']:
+        targets = [(0, ) for state in states]
+    else:
+        targets = [(state['k'] / 2, ) for state in states]
+    states = [(state['k'], state['z']) for state in states]
+    for i in range(coldstart_len):
+        actions = naf.actions(states, max_prod)
+        naf.train_actions_coldstart(states, max_prod, targets)
+        if i % 10000 == 0:
+            print "action", [a[0] for a in actions[0:10]]
+            print "target", [t[0] for t in targets[0:10]]
+        if np.allclose(actions, targets, atol=.2):
+            success = True
+            break
+    if not success:
+        print "WARNING actions did not converge"
+        print naf.actions(states, max_prod)[0:5]
+    success = False
+    n = 100
+    for i in range(coldstart_len):
+        states = [env.sample_state() for _ in range(n)]
+        targets = [(-10.0 + state['k'] * .01, ) for state in states]
+        states = [(state['k'], state['z']) for state in states]
+        naf.train_values_coldstart(states, targets)
+        values = naf.value(states)
+        if i % 10000 == 0:
+            pass
+            print "action", values[0:10]
+            print "target", targets[0:10]
+        if np.allclose(values, targets, atol=.2):
+            success = True
+            break
+    if not success:
+        print "WARNING values did not converge"
+    return naf
 
 
 class NAFApproximation(object):

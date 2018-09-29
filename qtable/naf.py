@@ -14,8 +14,12 @@ class SetupNAF(object):
         nnv = neuralnetwork.NeuralNetwork(indim, 1,  x=x, **nnvParameters)
         nnq = neuralnetwork.NeuralNetwork(
             indim, actiondim, x=x, **nnqParameters)
+        if actiondim == 1:
+            pdim = 1
+        else:
+            pdim = (actiondim) * (actiondim + 1) / 2
         nnp = neuralnetwork.NeuralNetwork(
-            indim, actiondim ** 2, x=x, **nnpParameters)
+            indim, pdim, x=x, **nnpParameters)
         naf = NAFApproximation(
             nnv, nnp, nnq, actiondim, **learningParameters)
 
@@ -102,8 +106,11 @@ class NAFApproximation(object):
         mask[np.triu_indices(actiondim)] = 0
         self.mask = tf.constant(mask, dtype=tf.float32)
         self.px = nn.x
-        self.P = tf.map_fn(self.to_semi_definite,
-                           tf.reshape(nn.out, (-1, actiondim, actiondim)))
+        upper_triang = tf.exp(
+            tf.contrib.distributions.fill_triangular(nn.out))
+        diag = tf.matrix_diag_part(upper_triang)
+        L = tf.matrix_set_diag(upper_triang * mask, diag)
+        self.P = tf.matmul(L, tf.transpose(L, perm=[0, 2, 1]))
 
     def _setup_q_calculation(self, nn, actiondim, compress=False):
         self.action_inp = tf.placeholder(
@@ -197,7 +204,7 @@ class NAFApproximation(object):
     def __exit__(self):
         self.session.close()
 
-    def renderBestA(self):
+    def renderBestA(self, include_best=True):
         x = [(x, 0) for x in np.arange(0, 1.0, .01)]
         max_prod = [(math.pow(s[0], 1.0 / 3.0) * .9792,) for s in x]
 
@@ -207,7 +214,8 @@ class NAFApproximation(object):
 
         plt.plot([s[0] for s in x], actions, label="action")
         plt.plot([s[0] for s in x], max_prod, label="max")
-        plt.plot([s[0] for s in x], best, label="best")
+        if include_best:
+            plt.plot([s[0] for s in x], best, label="best")
         plt.title("Best Actions")
  #       plt.waitforbuttonpress(0)
         # plt.close()

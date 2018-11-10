@@ -19,6 +19,9 @@ class LogUtility(object):
     def utility(self, c):
         return math.log(c)
 
+    def derivative(self, c):
+        return 1.0 / c
+
 
 class Production(object):
 
@@ -27,8 +30,11 @@ class Production(object):
         self.delta = delta
         self.technology = technology
 
-    def production(self, k, z):
+    def production(self, k, z, **kwargs):
         return self.technology[z] * math.pow(k, self.alpha) + (1.0 - self.delta) * k
+
+    def derivative(self, k, z, **kwargs):
+        return self.technology[z] * self.alpha * math.pow(k, self.alpha - 1.0) + (1.0 - delta)
 
     def __len__(self):
         return len(self.technology)
@@ -42,6 +48,9 @@ class Motion(object):
 
     def next(self, k, z):
         return np.random.choice(self.levels, p=self.transition[z, ])
+
+    def distribution(self, k, z):
+        return [p for p in self.transition[z, ] if p > 0]
 
 
 class GrowthEconomy(object):
@@ -57,6 +66,13 @@ class GrowthEconomy(object):
         utility = self.utility.utility(**action)
         next_capital = max(p - action['c'], 0.0)
         return utility, {'k': next_capital, 'z': self.motion.next(**instate)}
+
+    def distribution(self, instate, action):
+        p = self.production.production(**instate)
+        action['c'] = min(action['c'], p)
+        utility = self.utility.utility(**action)
+        next_capital = max(p - action['c'], 0.0)
+        return utility, [{'k': next_capital, 'z': z, 'p': p} for z, p in enumerate(self.motion.distribution(**instate))]
 
     def shape(self):
         return (2, 1)
@@ -85,3 +101,9 @@ delta = 1.0
 prod = Production(alpha, delta, vProductivity)
 motion = Motion(mTransition)
 jesusfv = GrowthEconomy(LogUtility(), prod, motion)
+
+if __name__ == '__main__':
+    state = jesusfv.sample_state()
+    action = {'c': state['k'] / 2.0}
+    print state, action
+    print jesusfv.distribution(state, action)

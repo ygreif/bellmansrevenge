@@ -8,9 +8,9 @@ from params import random_parameters, model
 
 def worker(num, params, env, train_episodes, num_attempts, test_state):
     results = []
-    print "parameters", num, "train_episodes", train_episodes, "attempts", num_attempts
+    print("parameters", num, "train_episodes", train_episodes, "attempts", num_attempts)
     for attempt in range(num_attempts):
-        print "parameters", num, "attempt", attempt
+        print("parameters", num, "attempt", attempt)
         q = naf.SetupNAF.setup(env, **params['naf'])
         memory = samples.Samples(10000)
         a = agent.Agent(q, memory)
@@ -24,7 +24,7 @@ def worker(num, params, env, train_episodes, num_attempts, test_state):
         for _ in range(50):
             utilities.append(a.episode(env, strat, train=False))
         results.append(sum(utilities) / len(utilities))
-    print "Worker", num, "done"
+    print("Worker", num, "done")
     return (params, results)
 
 
@@ -45,7 +45,7 @@ default_params = {'naf': {'learningParameters': {'compress': True,
 
 
 def runworkers(num_params, max_iters, num_runs, max_workers, test_state, default_params=False):
-    print "num_params", num_params, "max_workers", max_workers
+    print("num_params", num_params, "max_workers", max_workers)
     args = []
     for i in range(num_params):
         if not default_params:
@@ -53,12 +53,12 @@ def runworkers(num_params, max_iters, num_runs, max_workers, test_state, default
         else:
             params = default_params
         args.append((i, params, model, max_iters, num_runs, test_state))
-    print "args are", args
+    print("args are", args)
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         r = [r for r in executor.map(helper, args)]
     return r
 
 from envs.economy import jesusfv
 if __name__ == '__main__':
-    print "Starting workers from worker"
-    print runworkers(5, 400, 5, 5, {'k': .2, 'z': 1}, False)
+    print("Starting workers from worker")
+    print(runworkers(5, 400, 5, 5, {'k': .2, 'z': 1}, False))

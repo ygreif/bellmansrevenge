@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 import math
 
-import neuralnetwork
+from . import neuralnetwork
 
 
 class SetupNAF(object):
@@ -17,7 +17,7 @@ class SetupNAF(object):
         if actiondim == 1:
             pdim = 1
         else:
-            pdim = (actiondim) * (actiondim + 1) / 2
+            pdim = (actiondim) * (actiondim + 1) // 2
         nnp = neuralnetwork.NeuralNetwork(
             indim, pdim, x=x, **nnpParameters)
         naf = NAFApproximation(
@@ -40,14 +40,14 @@ def coldStart(naf, coldstart_len, n_examples):
         actions = naf.actions(states, max_prod)
         naf.train_actions_coldstart(states, max_prod, targets)
         if i % 10000 == 0:
-            print "action", [a[0] for a in actions[0:10]]
-            print "target", [t[0] for t in targets[0:10]]
+            print("action", [a[0] for a in actions[0:10]])
+            print("target", [t[0] for t in targets[0:10]])
         if np.allclose(actions, targets, atol=.2):
             success = True
             break
     if not success:
-        print "WARNING actions did not converge"
-        print naf.actions(states, max_prod)[0:5]
+        print("WARNING actions did not converge")
+        print(naf.actions(states, max_prod)[0:5])
     success = False
     n = 100
     for i in range(coldstart_len):
@@ -58,13 +58,13 @@ def coldStart(naf, coldstart_len, n_examples):
         values = naf.value(states)
         if i % 10000 == 0:
             pass
-            print "action", values[0:10]
-            print "target", targets[0:10]
+            print("action", values[0:10])
+            print("target", targets[0:10])
         if np.allclose(values, targets, atol=.2):
             success = True
             break
     if not success:
-        print "WARNING values did not converge"
+        print("WARNING values did not converge")
     return naf
 
 
@@ -124,7 +124,7 @@ class NAFApproximation(object):
         if compress:
             self.mu = ((tf.tanh(nn.out) + 1.0) / 2.0) * self.max_prod
         else:
-            print "Not compressed"
+            print("Not compressed")
             self.mu = nn.out
 
         self.batch = tf.reshape(self.action_inp - self.mu, [-1, 1, actiondim])

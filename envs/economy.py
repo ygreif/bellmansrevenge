@@ -105,5 +105,5 @@ jesusfv = GrowthEconomy(LogUtility(), prod, motion)
 if __name__ == '__main__':
     state = jesusfv.sample_state()
     action = {'c': state['k'] / 2.0}
-    print state, action
-    print jesusfv.distribution(state, action)
+    print(state, action)
+    print(jesusfv.distribution(state, action))

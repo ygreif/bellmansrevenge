@@ -2,7 +2,7 @@ import random
 
 import numpy as np
 
-import samples
+from . import samples
 
 
 def constructStrategy(episode, n_episodes, **kwargs):
@@ -24,7 +24,6 @@ class FixedDeltaStrat(object):
 
     def explore(self, action, max_action):
         delta = random.uniform(-self.delta, self.delta)
-        # print action, delta, max_action
         if action + delta < .1 * max_action:
             return action
         elif action + delta > .9 * max_action:
@@ -85,8 +84,7 @@ class Agent(object):
             action = {'c': strat.explore(original_action, max_prod)}
 
             if debug:
-                print action, original_action, state, max_prod, len(self.memory.samples)
-            # print action, original_action
+                print(action, original_action, state, max_prod, len(self.memory.samples))
             if action['c'] <= 0 or max_prod <= 0:
                 return -99999
 

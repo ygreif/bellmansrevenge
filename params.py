@@ -3,8 +3,8 @@ import numpy as np
 
 import tensorflow as tf
 
-vProductivity = np.array([0.9792, ], float)
-mTransition = np.array([[1.0, ], float])
+vProductivity = np.array([0.9792], dtype=float)
+mTransition = np.array([[1.0]], dtype=float)
 
 alpha = 1.0 / 3.0
 delta = 1.0

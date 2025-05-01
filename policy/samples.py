@@ -4,7 +4,7 @@ import numpy
 
 
 def dict_to_tuple(d):
-    return tuple(v for _, v in d.iteritems())
+    return tuple(v for _, v in d.items())
 
 
 def sample_to_state_tuple(s):

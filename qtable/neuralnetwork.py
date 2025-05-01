@@ -26,7 +26,6 @@ class NeuralNetwork(object):
         if x is not None:
             self.x = x
         else:
-            print "Making new placeholder"
             self.x = tf.placeholder(tf.float32, [None, indim])
         self.indim = indim
         self.enddim = enddim
@@ -38,6 +37,5 @@ class NeuralNetwork(object):
                 FullyConnectedLayer(inp, (prev_dim, out_dim), nonlinearity=nonlinearity, use_dropout=use_dropout))
             inp = self.layers[-1].out
             prev_dim = out_dim
-        self.layers.append(FullyConnectedLayer(
-            inp, (prev_dim, enddim), nonlinearity=False))
+        self.layers.append(FullyConnectedLayer(inp, (prev_dim, enddim), nonlinearity=False))
         self.out = self.layers[-1].out

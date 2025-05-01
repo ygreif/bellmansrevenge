@@ -1,8 +1,11 @@
-import tensorflow as tf
-import numpy as np
 import math
 
-from . import neuralnetwork
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn as nn
+
+import neuralnetwork
 
 
 class SetupNAF(object):
@@ -10,28 +13,24 @@ class SetupNAF(object):
     @classmethod
     def setup(cls, env, nnvParameters, nnpParameters, nnqParameters, learningParameters):
         indim, actiondim = env.shape()
-        x = tf.placeholder(tf.float32, [None, indim])
-        nnv = neuralnetwork.NeuralNetwork(indim, 1,  x=x, **nnvParameters)
+        nnv = neuralnetwork.NeuralNetwork(indim, 1, **nnvParameters)
         nnq = neuralnetwork.NeuralNetwork(
-            indim, actiondim, x=x, **nnqParameters)
+            indim, actiondim, **nnqParameters)
         if actiondim == 1:
             pdim = 1
         else:
             pdim = (actiondim) * (actiondim + 1) // 2
-        nnp = neuralnetwork.NeuralNetwork(
-            indim, pdim, x=x, **nnpParameters)
-        naf = NAFApproximation(
-            nnv, nnp, nnq, actiondim, **learningParameters)
+        nnp = neuralnetwork.NeuralNetwork(indim, pdim, **nnpParameters)
+        naf = NAFApproximation(nnv, nnp, nnq, actiondim, **learningParameters)
         return naf
 
 
-def coldStart(naf, coldstart_len, n_examples):
+def coldStart(naf, env, coldstart_len, n_samples=100, learning_params={'compress': True}):
     # initialize NAF so actions are in range
-    n = 100
     success = False
-    states = [env.sample_state() for _ in range(n)]
+    states = [env.sample_state() for _ in range(n_samples)]
     max_prod = [(env.production.production(**state),) for state in states]
-    if learningParameters['compress']:
+    if learning_params['compress']:
         targets = [(0, ) for state in states]
     else:
         targets = [(state['k'] / 2, ) for state in states]
@@ -49,15 +48,13 @@ def coldStart(naf, coldstart_len, n_examples):
         print("WARNING actions did not converge")
         print(naf.actions(states, max_prod)[0:5])
     success = False
-    n = 100
     for i in range(coldstart_len):
-        states = [env.sample_state() for _ in range(n)]
+        states = [env.sample_state() for _ in range(n_samples)]
         targets = [(-10.0 + state['k'] * .01, ) for state in states]
         states = [(state['k'], state['z']) for state in states]
         naf.train_values_coldstart(states, targets)
         values = naf.value(states)
         if i % 10000 == 0:
-            pass
             print("action", values[0:10])
             print("target", targets[0:10])
         if np.allclose(values, targets, atol=.2):
@@ -68,143 +65,168 @@ def coldStart(naf, coldstart_len, n_examples):
     return naf
 
 
-class NAFApproximation(object):
+class NAFApproximation(nn.Module):
+    def __init__(self, nnv, nnp, nnq, actiondim, learning_rate=1e-3, discount=0.99, compress=False):
+        super(NAFApproximation, self).__init__()
+        self.nnv = nnv
+        self.nnp = nnp
+        self.nnq = nnq
+        self.actiondim = actiondim
+        self.compress = compress
 
-    def to_semi_definite(self, M):
-        diag = tf.sqrt(tf.exp(tf.matrix_diag_part(M)))
-        L = tf.matrix_set_diag(M * self.mask, diag)
-        return tf.matmul(L, tf.transpose(L))
+        self.discount = discount
+        self.gamma = torch.tensor(discount, dtype=torch.float32)
 
-    def __init__(self, nnv, nnp, nnq, actiondim, learning_rate, discount, compress, keep_prob=1):
-        self.beta = discount
-        self.discount = tf.constant(discount, dtype=tf.float32)
-        self.x = nnv.x
+        # Create optimizer (params from all subnets)
+        self.optimizer = torch.optim.Adam(
+            list(nnv.parameters()) + list(nnp.parameters()) + list(nnq.parameters()),
+            lr=learning_rate
+        )
 
-        self._setup_v_calculation(nnv)
-        self._setup_p_calculation(nnp, actiondim)
-        self._setup_q_calculation(nnq, actiondim, compress)
-        self._setup_next_q_calulcation()
-        self._setup_train_step(learning_rate)
-        self.keep_prob = keep_prob
+        # Precompute lower-triangular mask for L
+        mask = torch.ones(actiondim, actiondim)
+        mask[torch.triu_indices(actiondim, actiondim)] = 0
+        self.register_buffer("mask", mask)
 
-        init = tf.global_variables_initializer()
-        self.session = tf.Session()
-        self.session.run(init)
+        # Create loss functions
+        self.mse_loss = nn.MSELoss()
 
-    def _setup_v_calculation(self, nn):
-        self.vx = nn.x
-        self.v = nn.out
+    def _build_L_matrix(self, tril_elements):
+        # builds from minimal representation (a(a+1)/2)
+        batch_size = tril_elements.size(0)
+        L = torch.zeros((batch_size, self.actiondim, self.actiondim), device=tril_elements.device)
+        tril_indices = torch.tril_indices(row=self.actiondim, col=self.actiondim, offset=0)
+        L[:, tril_indices[0], tril_indices[1]] = tril_elements
 
-        # coldstart value
-        self.target_value = tf.placeholder(
-            tf.float32, [None, 1], name="target_value")
-        coldstart_loss = tf.reduce_sum(
-            tf.square(self.target_value - self.v))
-        self.coldstart_values = tf.train.AdamOptimizer(
-            learning_rate=.1).minimize(coldstart_loss)
+        # Ensure positive diagonals using exp
+        diag_idx = torch.arange(self.actiondim)
+        L[:, diag_idx, diag_idx] = torch.exp(L[:, diag_idx, diag_idx])
 
-    def _setup_p_calculation(self, nn, actiondim):
-        mask = np.ones((actiondim, actiondim))
-        mask[np.triu_indices(actiondim)] = 0
-        self.mask = tf.constant(mask, dtype=tf.float32)
-        self.px = nn.x
-        upper_triang = tf.exp(
-            tf.contrib.distributions.fill_triangular(nn.out))
-        diag = tf.matrix_diag_part(upper_triang)
-        L = tf.matrix_set_diag(upper_triang * mask, diag)
-        self.P = tf.matmul(L, tf.transpose(L, perm=[0, 2, 1]))
+        return L
 
-    def _setup_q_calculation(self, nn, actiondim, compress=False):
-        self.action_inp = tf.placeholder(
-            tf.float32, [None, actiondim], name="action")
-        self.max_prod = tf.placeholder(tf.float32, [None, 1], name="max_prod")
+    def _to_semi_definite_pytorch(self, M):
+        # M: (batch, actiondim, actiondim)
+        diag = torch.sqrt(torch.exp(torch.diagonal(M, dim1=1, dim2=2)))
+        L = M * self.mask
+        L = L.clone()
+        diag_idx = torch.arange(self.actiondim)
+        L[:, diag_idx, diag_idx] = diag
+        return torch.bmm(L, L.transpose(1, 2))
 
-        self.qx = nn.x
-        self.qout = nn.out
-        if compress:
-            self.mu = ((tf.tanh(nn.out) + 1.0) / 2.0) * self.max_prod
+    def coldstart_action_loss(self, state, max_prod, target_action):
+        _, _, mu, _, _ = self.forward(state, target_action, max_prod)
+        return self.mse_loss(mu, target_action)
+
+    def coldstart_value_loss(self, env, state, target_value):
+        v = self.nnv(state)
+        return self.mse_loss(v, target_value)
+
+    def train_step(self, state, action, max_prod, reward, next_state):
+        with torch.no_grad():
+            v_next = self.nnv(next_state)
+            target = reward + self.gamma * v_next
+
+        Q, _, _, _, _ = self.forward(state, action, max_prod)
+        loss = self.mse_loss(Q, target)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        return loss.item()
+
+    def _calcP(self, state):
+        tril_elements = self.nnp(state)  # recall a(a+1)/2
+        L = self._build_L_matrix(tril_elements)
+        return torch.bmm(L, L.transpose(1, 2))
+
+    def forward(self, state, action, max_prod):
+        v = self.nnv(state)
+
+        P = self._calcP(state)
+
+        qout = self.nnq(state)
+        if self.compress:
+            mu = ((torch.tanh(qout) + 1.0) / 2.0) * max_prod
         else:
-            print("Not compressed")
-            self.mu = nn.out
+            mu = qout
 
-        self.batch = tf.reshape(self.action_inp - self.mu, [-1, 1, actiondim])
-        self.a = tf.reshape(tf.matmul(
-            tf.matmul(self.batch, self.P), tf.transpose(self.batch, [0, 2, 1])), [-1, 1])
-        self.Q = self.v - .5 * self.a
+        diff = (action - mu).unsqueeze(1)
+        A = torch.bmm(torch.bmm(diff, P), diff.transpose(1, 2)).squeeze(2)  # (batch, 1)
 
-        # coldstart action
-        self.target_action = tf.placeholder(
-            tf.float32, [None, actiondim], name="target_action")
-        coldstart_loss = tf.reduce_sum(
-            tf.square(self.target_action - self.qout))
-        self.coldstart_actions = tf.train.AdamOptimizer(
-            learning_rate=.001).minimize(coldstart_loss)
+        Q = v + .5 * A
 
-    def _setup_next_q_calulcation(self):
-        self.r = tf.placeholder(tf.float32, [None, 1], name="reward")
+        return Q, v, mu, A, P
 
-        self.update = self.v * self.discount + self.r
-
-    def _setup_train_step(self, learning_rate):
-        self.target = tf.placeholder(tf.float32, [None, 1])
-        self.actionloss = tf.reduce_sum(tf.abs(tf.to_float(tf.greater(self.mu, 0.8 * self.max_prod)) * self.mu + tf.to_float(tf.less(
-            self.mu, .2 * self.max_prod)) * (.2 * self.max_prod - self.mu))) * 99999999
-        self.loss = tf.reduce_sum(
-            tf.square(self.target - self.Q))
-
-        self.train_step = tf.train.AdamOptimizer(
-            learning_rate=learning_rate).minimize(self.loss)
-
-    def checkpoint(self, checkpoint_file):
-        saver = tf.train.Saver()
-        saver.save(self.session, checkpoint_file)
-
-    def restore(self, checkpoint_file):
-        saver = tf.train.Saver()
-        saver.restore(self.session, checkpoint_file)
-
-    def calcA(self, x, action, max_prod):
-        return self.session.run(self.a, feed_dict={self.x: x, self.max_prod: max_prod, self.action_inp: action, neuralnetwork.keep_prob: 1.0})
-
-    def calcP(self, x):
-        return self.session.run(self.P, feed_dict={self.x: x, neuralnetwork.keep_prob: 1.0})
-
-    def value(self, x):
-        return self.session.run(self.v, feed_dict={self.x: x, neuralnetwork.keep_prob: self.keep_prob})
-
-    def actions(self, x, max_prod):
-        return self.session.run(self.mu, feed_dict={self.x: x, self.max_prod: max_prod, neuralnetwork.keep_prob: 1.0})
-
-    def action(self, x, max_prod):
-        return self.session.run(
-            self.mu, feed_dict={self.x: x, self.max_prod: max_prod, neuralnetwork.keep_prob: 1.0})[0]
-
-    def calcActionloss(self, x, max_prod):
-        return self.session.run(self.actionloss, feed_dict={self.x: x, self.max_prod: max_prod, neuralnetwork.keep_prob: 1.0})
+    def actions(self, state, max_prod):
+        self.eval()
+        with torch.no_grad():
+            _, _, mu, _, _ = self.forward(state, mu := torch.zeros_like(max_prod), max_prod)
+        return mu
 
     def calcq(self, rewards, next_state):
-        return self.session.run(self.update, feed_dict={
-            self.r: rewards, self.x: next_state, neuralnetwork.keep_prob: self.keep_prob})
+        self.nnv.eval()
+        with torch.no_grad():
+            v_next = self.nnv(next_state)
+            return rewards + self.gamma * v_next
 
-    def storedq(self, state, action, max_prod):
-        return self.session.run(self.Q, feed_dict={self.x: state, self.action_inp: action, self.max_prod: max_prod, neuralnetwork.keep_prob: 1.0})
+    def calcA(self, state, action, max_prod):
+        self.eval()
+        with torch.no_grad():
+            _, _, _, A, _ = self.forward(state, action, max_prod)
+            return A
 
-    def calcloss(self, state, action, max_prod, rewards, next_state):
-        target = self.calcq(rewards, next_state)
-        return self.session.run(self.loss, feed_dict={self.target: target, self.x: state, self.max_prod: max_prod, self.action_inp: action, neuralnetwork.keep_prob: self.keep_prob})
-
-    def train_actions_coldstart(self, state, max_prod, target_action):
-        return self.session.run(self.coldstart_actions, feed_dict={self.x: state, self.target_action: target_action, self.max_prod: max_prod, neuralnetwork.keep_prob: self.keep_prob})
-
-    def train_values_coldstart(self, state, target_value):
-        return self.session.run(self.coldstart_values, feed_dict={self.x: state, self.target_value: target_value, neuralnetwork.keep_prob: self.keep_prob})
+    def value(self, state):
+        self.nnv.eval()
+        with torch.no_grad():
+            return self.nnv(state)
 
     def trainstep(self, state, action, max_prod, rewards, next_state):
-        target = self.calcq(rewards, next_state)
-        return self.session.run(self.train_step, feed_dict={self.target: target, self.x: state, self.max_prod: max_prod, self.action_inp: action, neuralnetwork.keep_prob: self.keep_prob})
+        self.train()
 
-    def __exit__(self):
-        self.session.close()
+        target = self.calcq(rewards, next_state)
+
+        Q, _, _, _, _ = self.forward(state, action, max_prod)
+        loss = self.mse_loss(Q, target)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        return loss.item()
+
+    def train_actions_coldstart(self, state, max_prod, target_action):
+        self.nnq.train()
+        self.optimizer.zero_grad()
+
+        qout = self.nnq(state)
+        if self.compress:
+            mu = ((torch.tanh(qout) + 1.0) / 2.0) * max_prod
+        else:
+            mu = qout
+
+        loss = self.mse_loss(mu, target_action)
+        loss.backward()
+        self.optimizer.step()
+
+        return loss.item()
+
+    def train_values_coldstart(self, state, target_value):
+        self.nnv.train()
+        self.optimizer.zero_grad()
+
+        v = self.nnv(state)
+        loss = self.mse_loss(v, target_value)
+
+        loss.backward()
+        self.optimizer.step()
+
+        return loss.item()
+
+    def checkpoint(self, checkpoint_file):
+        torch.save(self.state_dict(), checkpoint_file)
+
+    def restore(self, checkpoint_file):
+        self.load_state_dict(torch.load(checkpoint_file))
 
     def renderBestA(self, include_best=True):
         x = [(x, 0) for x in np.arange(0, 1.0, .01)]
@@ -212,28 +234,20 @@ class NAFApproximation(object):
 
         actions = self.actions(x, max_prod)
         best = [p[0] * (1 - 1.0 / 3.0 * .95) for p in max_prod]
-        import matplotlib.pyplot as plt
 
         plt.plot([s[0] for s in x], actions, label="action")
         plt.plot([s[0] for s in x], max_prod, label="max")
         if include_best:
             plt.plot([s[0] for s in x], best, label="best")
         plt.title("Best Actions")
- #       plt.waitforbuttonpress(0)
-        # plt.close()
         return plt
 
     def renderA(self):
         states = [(x, 0) for x in np.arange(.1, 1.1, .25)]
-        #        max_prod = [(math.pow(x, 1.0 / 3.0) * .9792) for s in x]
-
-        import matplotlib.pyplot as plt
         for state in states:
             mprod = math.pow(state[0], 1.0 / 3.0) * .9792
             actions = np.expand_dims(np.arange(0, mprod, mprod / 10.0), axis=1)
             max_prod = ([(mprod,) for _ in actions])
-
-#            max_prod = [(math.pow(x, 1.0 / 3.0) * .9792,) for i in]
             value = self.calcA([state for a in actions], actions, max_prod)
 
             plt.plot(actions, value, label=str(state))
@@ -242,34 +256,49 @@ class NAFApproximation(object):
         plt.close()
 
     def renderQ(self):
-        state = (.4, 0)
-        mprod = math.pow(state[0], 1.0 / 3.0) * .9792
+        self.eval()  # Set to evaluation mode
 
-        actions = np.expand_dims(np.arange(.001, mprod, mprod / 10.0), axis=1)
-        xx = [a[0] for a in actions]
-        max_prod = [(mprod,) for _ in actions]
-        utility = [(math.log(a[0]),) for a in actions]
-        x = [state for _ in actions]
-        next_x = [(mprod - a[0], 0) for a in actions]
+        # Define fixed state
+        state = (0.4, 0)
+        mprod = math.pow(state[0], 1.0 / 3.0) * 0.9792
 
-        import matplotlib.pyplot as plt
+        # Generate candidate actions
+        actions = np.arange(0.001, mprod, mprod / 10.0).reshape(-1, 1)
+        xx = actions[:, 0].tolist()
+        max_prod = np.full((len(actions), 1), mprod)
+        utility = np.log(actions)
 
-        plt.plot(xx, self.storedq(x, actions, max_prod),
-                 label="value + action reward")
-        plt.plot(xx, -.5 * self.calcA(x, actions, max_prod), label="a reward")
-        plt.plot(xx, self.calcq(utility, next_x),
-                 label="utility + next_value")
-        plt.plot(xx, self.value(next_x), label="next value")
+        # Torch tensors
+        state_batch = torch.tensor([state] * len(actions), dtype=torch.float32)
+        action_tensor = torch.tensor(actions, dtype=torch.float32)
+        max_prod_tensor = torch.tensor(max_prod, dtype=torch.float32)
+        reward_tensor = torch.tensor(utility, dtype=torch.float32)
+        next_states = torch.tensor([(mprod - a[0], 0) for a in actions], dtype=torch.float32)
+
+        # Compute values
+        stored_q = self.forward(state_batch, action_tensor, max_prod_tensor)[0]
+        advantage = self.calcA(state_batch, action_tensor, max_prod_tensor)
+        future_value = self.value(next_states)
+        future_reward = reward_tensor + self.gamma * future_value
+
+        # Plot
+        plt.plot(xx, stored_q.numpy(), label="value + action reward")
+        plt.plot(xx, (-0.5 * advantage).numpy(), label="a reward")
+        plt.plot(xx, future_reward.numpy(), label="utility + next_value")
+        plt.plot(xx, future_value.numpy(), label="next value")
 
         plt.legend()
         plt.waitforbuttonpress(0)
         plt.close()
 
     def renderV(self):
-        x = [(x, 0) for x in np.arange(0, 1.0, .01)]
-        y = self.value(x)
-        import matplotlib.pyplot as plt
-        plt.plot([s[0] for s in x], y)
+        self.eval()
+
+        x_vals = np.arange(0, 1.0, 0.01)
+        states = torch.tensor([[x, 0] for x in x_vals], dtype=torch.float32)
+        v_vals = self.value(states).squeeze(1).numpy()
+
+        plt.plot(x_vals, v_vals)
         plt.title("v over range")
         plt.waitforbuttonpress(0)
         plt.close()

@@ -1,7 +1,8 @@
 import itertools
 import collections
-import numpy
 
+import numpy
+import torch
 
 def dict_to_tuple(d):
     return tuple(v for _, v in d.items())
@@ -20,6 +21,15 @@ class Minibatch(object):
         self.reward = []
         self.max_prod = []
         self.original_action = []
+
+    def to_torch(self):
+        self.state = torch.tensor(self.state, dtype=torch.float32)
+        self.next_state = torch.tensor(self.next_state, dtype=torch.float32)
+        self.action = torch.tensor(self.action, dtype=torch.float32)
+        self.reward = torch.tensor(self.reward, dtype=torch.float32)
+        self.max_prod = torch.tensor(self.max_prod, dtype=torch.float32)
+        self.original_action = torch.tensor(self.original_action, dtype=torch.float32)
+        return self
 
     def append(self, state, next_state, action, reward, max_prod, original_action):
         self.state.append(dict_to_tuple(state))

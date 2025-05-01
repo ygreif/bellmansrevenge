@@ -1,7 +1,9 @@
+import random
+
 from envs import economy
 import numpy as np
 
-import tensorflow as tf
+import torch.nn as nn
 
 vProductivity = np.array([0.9792], dtype=float)
 mTransition = np.array([[1.0]], dtype=float)
@@ -13,11 +15,11 @@ motion = economy.Motion(mTransition)
 model = economy.GrowthEconomy(economy.LogUtility(), prod, motion)
 
 
-def random_nn_parameters(hidden_choices=[[5], [10], [100], [200], [200, 200], [400], [50], [10, 10], [10, 10, 10], [100, 100], [100, 100, 100], [1000]], nonlinearity_choices=[tf.nn.leaky_relu, tf.nn.relu, tf.nn.tanh]):
-    return {'hidden_layers': np.random.choice(hidden_choices), 'nonlinearity': np.random.choice(nonlinearity_choices)}
+def random_nn_parameters(hidden_choices=[[5], [10], [100], [200], [200, 200], [400], [50], [10, 10], [10, 10, 10], [100, 100], [100, 100, 100], [1000]], nonlinearity_cls_choices=[nn.LeakyReLU]):
+    return {'hidden_layers': random.choice(hidden_choices), 'nonlinearity_cls': np.random.choice(nonlinearity_cls_choices)}
 
 
-def random_learning_parameters(rates=[.1, .01, .001, .002, .0001], discount=[.95], compress=[True, False]):
+def random_learning_parameters(rates=[.1, .01, .001, .002, .0001], discount=[.95], compress=[True]):
     return {'learning_rate': np.random.choice(rates), 'discount': np.random.choice(discount), 'compress': np.random.choice(compress)}
 
 

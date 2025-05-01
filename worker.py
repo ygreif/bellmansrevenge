@@ -1,4 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor
+import torch.nn as nn
 
 from qtable import naf
 from policy import samples, agent
@@ -31,16 +32,16 @@ def worker(num, params, env, train_episodes, num_attempts, test_state):
 def helper(args):
     return worker(*args)
 
-import tensorflow as tf
+
 default_params = {'naf': {'learningParameters': {'compress': True,
                                                  'discount': 0.99,
                                                  'learning_rate': 0.001},
                   'nnpParameters': {'hidden_layers': [5],
-                                    'nonlinearity': tf.nn.tanh},
+                                    'nonlinearity_cls': nn.LeakyReLU},
                   'nnqParameters': {'hidden_layers': [10],
-                                    'nonlinearity': tf.nn.tanh},
+                                    'nonlinearity_cls': nn.LeakyReLU},
                   'nnvParameters': {'hidden_layers': [200],
-                                    'nonlinearity': tf.nn.tanh}},
+                                    'nonlinearity_cls': nn.LeakyReLU}},
                   'strat': {'hi': 1.1, 'lo': 0.5, 'max_iters': 40}}
 
 

@@ -82,9 +82,9 @@ class GrowthEconomy(object):
             'k': random.random(), 'z': random.randrange(len(self.production))}
         return state
 
-    def action_loss(self, action):
-        import tensorflow as tf
-        tf.cond(tf.greater(0, action), tf.abs(action), 0)
+#    def action_loss(self, action):
+#        import tensorflow as tf
+#        tf.cond(tf.greater(0, action), tf.abs(action), 0)
     '''
     def dist_to_valid(self, tf, action, state):
         return tf.cond(action < 0.0, tf.abs(action), 0.0) + tf.cond(action > state[0], action, 0.0)

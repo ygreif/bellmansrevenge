@@ -79,6 +79,7 @@ class Agent(object):
         discount = 1.0
         for _ in range(strat.max_iters):
             max_prod = model.production.production(**state)
+            # what if 2d action
             original_action = q.action(
                 [samples.dict_to_tuple(state)], [(max_prod,)])[0]
             action = {'c': strat.explore(original_action, max_prod)}
@@ -93,7 +94,7 @@ class Agent(object):
                 import pdb
                 pdb.set_trace()
             if train and len(self.memory.samples) > strat.minibatch_size:
-                batch = self.memory.batch(strat.minibatch_size)
+                batch = self.memory.batch(strat.minibatch_size).to_torch()
                 q.trainstep(batch.state, batch.action, batch.max_prod,
                             batch.reward, batch.next_state)
 

@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-import neuralnetwork
+from . import neuralnetwork
 
 
 class SetupNAF(object):
@@ -74,7 +74,7 @@ class NAFApproximation(nn.Module):
         self.actiondim = actiondim
         self.compress = compress
 
-        self.discount = discount
+        self.beta = discount
         self.gamma = torch.tensor(discount, dtype=torch.float32)
 
         # Create optimizer (params from all subnets)
@@ -156,6 +156,17 @@ class NAFApproximation(nn.Module):
         Q = v + .5 * A
 
         return Q, v, mu, A, P
+
+    def action(self, x, max_prod):
+        self.eval()
+        state_tensor = torch.tensor(x, dtype=torch.float32)
+        max_prod_tensor = torch.tensor(max_prod, dtype=torch.float32)
+
+        with torch.no_grad():
+            mu = self.actions(state_tensor, max_prod_tensor)
+
+        return mu[0].numpy()
+
 
     def actions(self, state, max_prod):
         self.eval()

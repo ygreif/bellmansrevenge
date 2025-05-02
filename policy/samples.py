@@ -22,13 +22,13 @@ class Minibatch(object):
         self.max_prod = []
         self.original_action = []
 
-    def to_torch(self):
-        self.state = torch.tensor(self.state, dtype=torch.float32)
-        self.next_state = torch.tensor(self.next_state, dtype=torch.float32)
-        self.action = torch.tensor(self.action, dtype=torch.float32)
-        self.reward = torch.tensor(self.reward, dtype=torch.float32)
-        self.max_prod = torch.tensor(self.max_prod, dtype=torch.float32)
-        self.original_action = torch.tensor(self.original_action, dtype=torch.float32)
+    def to_torch(self, device):
+        self.state = torch.tensor(self.state, dtype=torch.float32, device=device)
+        self.next_state = torch.tensor(self.next_state, dtype=torch.float32, device=device)
+        self.action = torch.tensor(self.action, dtype=torch.float32, device=device)
+        self.reward = torch.tensor(self.reward, dtype=torch.float32, device=device)
+        self.max_prod = torch.tensor(self.max_prod, dtype=torch.float32, device=device)
+        self.original_action = torch.tensor(self.original_action, dtype=torch.float32, device=device)
         return self
 
     def append(self, state, next_state, action, reward, max_prod, original_action):

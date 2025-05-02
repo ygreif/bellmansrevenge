@@ -1,11 +1,14 @@
-import samples
+import torch
+
+from policy import samples
 
 
 def convergence(q, memory, size=100, delta=.01):
     if len(memory) < size:
         return False
-    batch = memory.recent(size)
-    actions = q.actions(batch.state, batch.max_prod)
+    batch = memory.recent(size).to_torch(q.device)
+    with torch.no_grad():
+        actions = q.actions(batch.state, batch.max_prod)
 
     error = 0
     for i in range(size):
@@ -26,8 +29,10 @@ def value_error(q, model, iters, state=False):
         states = [state] + [{'k': next_state['k'], 'z': next_state['z']}
                             for next_state in next_states]
         states = [samples.dict_to_tuple(s) for s in states]
+        states = torch.tensor(states, dtype=torch.float32, device=q.device)
 
-        values = q.value(states)
+        with torch.no_grad():
+            values = q.value(states)
         expected_value = utility
         for next_state, value in zip(next_states, values[1:]):
             expected_value += q.beta * value[0] * next_state['p']
@@ -35,35 +40,44 @@ def value_error(q, model, iters, state=False):
         _, next_state = model.iterate(state, action)
     return error / iters
 
-
-def euler_error(q, model, iters, state=False):
-    if not state:
+def euler_error(q, model, iters, state=None):
+    if state is None:
         state = model.sample_state()
-    error = 0
+
+    error = 0.0
     for _ in range(iters):
         max_prod = model.production.production(**state)
         c = q.action([samples.dict_to_tuple(state)], [(max_prod,)])[0]
         if c <= 0 or c > max_prod:
             return -9999
+
         action = {'c': c}
         utility, next_states = model.distribution(state, action)
         states = [samples.sample_to_state_tuple(s) for s in next_states]
-        max_prods = [(model.production.production(**s),)
-                     for s in next_states]
-        actions = q.actions(states, max_prods)
+        max_prods = [(model.production.production(**s),) for s in next_states]
+
+        state_tensor = torch.tensor(states, dtype=torch.float32, device=q.device)
+        max_prod_tensor = torch.tensor(max_prods, dtype=torch.float32, device=q.device)
+
+        with torch.no_grad():
+            actions = q.actions(state_tensor, max_prod_tensor).cpu().numpy()
+
         eps = -1.0
-        dUtility = model.utility.derivative(action['c'])
+        dUtility = model.utility.derivative(c)
         for idx in range(len(next_states)):
             cPrime = max(min(max_prods[idx][0], actions[idx][0]), 0)
-            kPrime = max_prod - action['c']
+            kPrime = max_prod - c
             dUtilityPrime = model.utility.derivative(cPrime)
-            dProdPrime = model.production.derivative(
-                kPrime, next_states[idx]['z'])
-            eps += next_states[idx]['p'] * q.beta * dUtilityPrime / dUtility * \
-                (1 - model.production.delta + dProdPrime)
+            dProdPrime = model.production.derivative(kPrime, next_states[idx]['z'])
+            eps += (
+                next_states[idx]['p']
+                * q.beta
+                * dUtilityPrime
+                / dUtility
+                * (1 - model.production.delta + dProdPrime)
+            )
+
         error += abs(eps)
-        if error < 0:
-            import pdb
-            pdb.set_trace()
         _, state = model.iterate(state, action)
+
     return error / iters

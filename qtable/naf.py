@@ -7,7 +7,6 @@ import torch.nn as nn
 
 from . import neuralnetwork
 
-
 class SetupNAF(object):
 
     @classmethod
@@ -24,40 +23,55 @@ class SetupNAF(object):
         naf = NAFApproximation(nnv, nnp, nnq, actiondim, **learningParameters)
         return naf
 
-
 def coldStart(naf, env, coldstart_len, n_samples=100, learning_params={'compress': True}):
-    # initialize NAF so actions are in range
+    naf.train()  # Ensure we're in training mode
+    device = naf.device
+
     success = False
-    states = [env.sample_state() for _ in range(n_samples)]
-    max_prod = [(env.production.production(**state),) for state in states]
-    if learning_params['compress']:
-        targets = [(0, ) for state in states]
+    states_raw = [env.sample_state() for _ in range(n_samples)]
+    max_prod = torch.tensor(
+        [[env.production.production(**s)] for s in states_raw],
+        dtype=torch.float32, device=device
+    )
+
+    if learning_params.get('compress', True):
+        targets = torch.zeros((n_samples, 1), dtype=torch.float32, device=device)
     else:
-        targets = [(state['k'] / 2, ) for state in states]
-    states = [(state['k'], state['z']) for state in states]
+        targets = torch.tensor([[s['k'] / 2] for s in states_raw],
+                               dtype=torch.float32, device=device)
+
+    state_tuples = [(s['k'], s['z']) for s in states_raw]
+    state_tensor = torch.tensor(state_tuples, dtype=torch.float32, device=device)
+
     for i in range(coldstart_len):
-        actions = naf.actions(states, max_prod)
-        naf.train_actions_coldstart(states, max_prod, targets)
+        actions = naf.actions(state_tensor, max_prod)
+        naf.train_actions_coldstart(state_tensor, max_prod, targets)
         if i % 10000 == 0:
-            print("action", [a[0] for a in actions[0:10]])
-            print("target", [t[0] for t in targets[0:10]])
-        if np.allclose(actions, targets, atol=.2):
+            print("action", actions[:10].squeeze(1).cpu().numpy())
+            print("target", targets[:10].squeeze(1).cpu().numpy())
+        if torch.allclose(actions, targets, atol=0.2):
             success = True
             break
     if not success:
         print("WARNING actions did not converge")
-        print(naf.actions(states, max_prod)[0:5])
+        print(naf.actions(state_tensor, max_prod)[:5])
+
     success = False
     for i in range(coldstart_len):
-        states = [env.sample_state() for _ in range(n_samples)]
-        targets = [(-10.0 + state['k'] * .01, ) for state in states]
-        states = [(state['k'], state['z']) for state in states]
-        naf.train_values_coldstart(states, targets)
-        values = naf.value(states)
+        states_raw = [env.sample_state() for _ in range(n_samples)]
+        targets = torch.tensor(
+            [[-10.0 + s['k'] * 0.01] for s in states_raw],
+            dtype=torch.float32, device=device
+        )
+        state_tuples = [(s['k'], s['z']) for s in states_raw]
+        state_tensor = torch.tensor(state_tuples, dtype=torch.float32, device=device)
+
+        naf.train_values_coldstart(state_tensor, targets)
+        values = naf.value(state_tensor)
         if i % 10000 == 0:
-            print("action", values[0:10])
-            print("target", targets[0:10])
-        if np.allclose(values, targets, atol=.2):
+            print("action", values[:10].squeeze(1).cpu().numpy())
+            print("target", targets[:10].squeeze(1).cpu().numpy())
+        if torch.allclose(values, targets, atol=0.2):
             success = True
             break
     if not success:
@@ -65,12 +79,16 @@ def coldStart(naf, env, coldstart_len, n_samples=100, learning_params={'compress
     return naf
 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class NAFApproximation(nn.Module):
     def __init__(self, nnv, nnp, nnq, actiondim, learning_rate=1e-3, discount=0.99, compress=False):
         super(NAFApproximation, self).__init__()
-        self.nnv = nnv
-        self.nnp = nnp
-        self.nnq = nnq
+        import pdb;pdb.set_trace()
+        print(device)
+        self.nnv = nnv.to(device)
+        self.nnp = nnp.to(device)
+        self.nnq = nnq.to(device)
         self.actiondim = actiondim
         self.compress = compress
 
@@ -90,6 +108,8 @@ class NAFApproximation(nn.Module):
 
         # Create loss functions
         self.mse_loss = nn.MSELoss()
+
+        self.device = device
 
     def _build_L_matrix(self, tril_elements):
         # builds from minimal representation (a(a+1)/2)
@@ -153,19 +173,21 @@ class NAFApproximation(nn.Module):
         diff = (action - mu).unsqueeze(1)
         A = torch.bmm(torch.bmm(diff, P), diff.transpose(1, 2)).squeeze(2)  # (batch, 1)
 
-        Q = v + .5 * A
+        #Q = v - A
+        Q = v - .5 * A
 
         return Q, v, mu, A, P
 
     def action(self, x, max_prod):
         self.eval()
-        state_tensor = torch.tensor(x, dtype=torch.float32)
-        max_prod_tensor = torch.tensor(max_prod, dtype=torch.float32)
+        # TODO: inconsistent about when to covnert to device
+        state_tensor = torch.tensor(x, dtype=torch.float32, device=device)
+        max_prod_tensor = torch.tensor(max_prod, dtype=torch.float32, device=device)
 
         with torch.no_grad():
             mu = self.actions(state_tensor, max_prod_tensor)
 
-        return mu[0].numpy()
+        return mu[0].cpu().numpy()
 
 
     def actions(self, state, max_prod):
@@ -240,16 +262,20 @@ class NAFApproximation(nn.Module):
         self.load_state_dict(torch.load(checkpoint_file))
 
     def renderBestA(self, include_best=True):
-        x = [(x, 0) for x in np.arange(0, 1.0, .01)]
-        max_prod = [(math.pow(s[0], 1.0 / 3.0) * .9792,) for s in x]
+        state = [(x, 0) for x in np.arange(0, 1.0, .01)]
+        state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device)
+        max_prod = [(math.pow(s[0], 1.0 / 3.0) * .9792,) for s in state]
+        max_prod_tensor = torch.tensor(max_prod, dtype=torch.float32, device=self.device)
 
-        actions = self.actions(x, max_prod)
+        actions = self.actions(state_tensor, max_prod_tensor)
+        # when delta=1 there is a closed for solution here (pg 4 https://www.sas.upenn.edu/~jesusfv//comparison_languages.pdf)
         best = [p[0] * (1 - 1.0 / 3.0 * .95) for p in max_prod]
 
-        plt.plot([s[0] for s in x], actions, label="action")
-        plt.plot([s[0] for s in x], max_prod, label="max")
+        plt.plot([s[0] for s in state], actions.cpu().numpy(), label="action")
+        plt.plot([s[0] for s in state], max_prod, label="max")
         if include_best:
-            plt.plot([s[0] for s in x], best, label="best")
+            plt.plot([s[0] for s in state], best, label="best")
+        plt.legend()
         plt.title("Best Actions")
         return plt
 

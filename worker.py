@@ -1,4 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
 import torch.nn as nn
 
 from qtable import naf
@@ -10,6 +11,7 @@ from params import random_parameters, model
 def worker(num, params, env, train_episodes, num_attempts, test_state):
     results = []
     print("parameters", num, "train_episodes", train_episodes, "attempts", num_attempts)
+    log_interval = 10
     for attempt in range(num_attempts):
         print("parameters", num, "attempt", attempt)
         q = naf.SetupNAF.setup(env, **params['naf'])
@@ -17,14 +19,18 @@ def worker(num, params, env, train_episodes, num_attempts, test_state):
         a = agent.Agent(q, memory)
 
         strat = agent.RelativeRangeStrat(**params['strat'])
-        for _ in range(train_episodes):
-            a.episode(env, strat)
+        for i in range(train_episodes):
+            utility = a.episode(env, strat)
+            if i % log_interval == 0:
+                print(f"[Worker {num}] Eval rollout {i + 1}/{train_episodes}, Utility: {utility:.3f}")
 
         strat = agent.NoExploration(max_iters=20)
         utilities = []
         for _ in range(50):
             utilities.append(a.episode(env, strat, train=False))
-        results.append(sum(utilities) / len(utilities))
+        avg_utility = sum(utilities) / len(utilities)
+        results.append(avg_utility)
+        print(f"[Worker {num}] Avg Utility: {avg_utility:.3f}")
     print("Worker", num, "done")
     return (params, results)
 
@@ -61,5 +67,7 @@ def runworkers(num_params, max_iters, num_runs, max_workers, test_state, default
 
 from envs.economy import jesusfv
 if __name__ == '__main__':
+    mp.set_start_method('spawn')
     print("Starting workers from worker")
-    print(runworkers(5, 400, 5, 5, {'k': .2, 'z': 1}, False))
+    result = runworkers(5, 400, 5, 5, {'k': .2, 'z': 1}, False)
+    import pdb;pdb.set_trace()

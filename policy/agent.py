@@ -94,7 +94,7 @@ class Agent(object):
                 import pdb
                 pdb.set_trace()
             if train and len(self.memory.samples) > strat.minibatch_size:
-                batch = self.memory.batch(strat.minibatch_size).to_torch()
+                batch = self.memory.batch(strat.minibatch_size).to_torch(device=q.device)
                 q.trainstep(batch.state, batch.action, batch.max_prod,
                             batch.reward, batch.next_state)
 

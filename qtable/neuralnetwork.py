@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class FullyConnectedLayer(nn.Module):
-    def __init__(self, input_dim, output_dim, nonlinearity_cls=None, use_dropout=False, dropout_prob=0.5):
+    def __init__(self, input_dim, output_dim, nonlinearity_cls=None, use_dropout=False, dropout_prob=0.5, bias=0.0):
         super(FullyConnectedLayer, self).__init__()
         layers = [nn.Linear(input_dim, output_dim)]
         if nonlinearity_cls:
@@ -13,8 +13,8 @@ class FullyConnectedLayer(nn.Module):
             layers.append(nn.Dropout(p=1.0 - dropout_prob))
         # Initialize weights
         assert type(layers[0]) == nn.Linear
-        nn.init.normal_(layers[0].weight)
-        nn.init.constant_(layers[0].bias, 1.0)
+        nn.init.xavier_uniform_(layers[0].weight)
+        nn.init.constant_(layers[0].bias, bias)
         self._nn = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -22,7 +22,7 @@ class FullyConnectedLayer(nn.Module):
 
 
 class NeuralNetwork(nn.Module):
-    def __init__(self, indim, enddim, hidden_layers, nonlinearity_cls=nn.ReLU, use_dropout=False, dropout_prob=0.5):
+    def __init__(self, indim, enddim, hidden_layers, nonlinearity_cls=nn.ReLU, use_dropout=False, dropout_prob=0.5, output_bias=0):
         super(NeuralNetwork, self).__init__()
         self.indim = indim
         self.enddim = enddim
@@ -37,7 +37,7 @@ class NeuralNetwork(nn.Module):
                                     use_dropout=use_dropout, dropout_prob=dropout_prob)
             )
             prev_dim = out_dim
-        self.layers.append(FullyConnectedLayer(prev_dim, enddim, nonlinearity_cls=None))
+        self.layers.append(FullyConnectedLayer(prev_dim, enddim, nonlinearity_cls=None, bias=output_bias))
 
     def forward(self, x):
         for layer in self.layers:

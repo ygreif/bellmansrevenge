@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from . import neuralnetwork
 
@@ -12,77 +13,94 @@ class SetupNAF(object):
     @classmethod
     def setup(cls, env, nnvParameters, nnpParameters, nnqParameters, learningParameters):
         indim, actiondim = env.shape()
-        nnv = neuralnetwork.NeuralNetwork(indim, 1, **nnvParameters)
-        nnq = neuralnetwork.NeuralNetwork(
-            indim, actiondim, **nnqParameters)
+        nnv = neuralnetwork.NeuralNetwork(indim, 1, **nnvParameters, output_bias=-10)
+        nnq = neuralnetwork.NeuralNetwork(indim, actiondim, **nnqParameters)
         if actiondim == 1:
             pdim = 1
         else:
             pdim = (actiondim) * (actiondim + 1) // 2
         nnp = neuralnetwork.NeuralNetwork(indim, pdim, **nnpParameters)
+        with torch.no_grad():
+            for p in nnp.parameters():
+                p.zero_()
+
         naf = NAFApproximation(nnv, nnp, nnq, actiondim, **learningParameters)
         return naf
 
-def coldStart(naf, env, coldstart_len, n_samples=100, learning_params={'compress': True}):
-    naf.train()  # Ensure we're in training mode
-    device = naf.device
-
-    success = False
+def sample_states_and_max_prod(env, n_samples, target_strat='zeros'):
+    # generate samples for the cold start
     states_raw = [env.sample_state() for _ in range(n_samples)]
     max_prod = torch.tensor(
         [[env.production.production(**s)] for s in states_raw],
         dtype=torch.float32, device=device
     )
-
-    if learning_params.get('compress', True):
-        targets = torch.zeros((n_samples, 1), dtype=torch.float32, device=device)
-    else:
-        targets = torch.tensor([[s['k'] / 2] for s in states_raw],
-                               dtype=torch.float32, device=device)
-
     state_tuples = [(s['k'], s['z']) for s in states_raw]
     state_tensor = torch.tensor(state_tuples, dtype=torch.float32, device=device)
-
-    for i in range(coldstart_len):
-        actions = naf.actions(state_tensor, max_prod)
-        naf.train_actions_coldstart(state_tensor, max_prod, targets)
-        if i % 10000 == 0:
-            print("action", actions[:10].squeeze(1).cpu().numpy())
-            print("target", targets[:10].squeeze(1).cpu().numpy())
-        if torch.allclose(actions, targets, atol=0.2):
-            success = True
-            break
-    if not success:
-        print("WARNING actions did not converge")
-        print(naf.actions(state_tensor, max_prod)[:5])
-
-    success = False
-    for i in range(coldstart_len):
-        states_raw = [env.sample_state() for _ in range(n_samples)]
+    if target_strat == 'zeros':
+        targets = torch.zeros((n_samples, 1), dtype=torch.float32, device=device)
+    elif target_strat == 'half':
+        targets = torch.tensor([[s['k'] / 2] for s in states_raw],
+                               dtype=torch.float32, device=device)
+    else:
         targets = torch.tensor(
             [[-10.0 + s['k'] * 0.01] for s in states_raw],
             dtype=torch.float32, device=device
         )
-        state_tuples = [(s['k'], s['z']) for s in states_raw]
-        state_tensor = torch.tensor(state_tuples, dtype=torch.float32, device=device)
 
-        naf.train_values_coldstart(state_tensor, targets)
-        values = naf.value(state_tensor)
-        if i % 10000 == 0:
-            print("action", values[:10].squeeze(1).cpu().numpy())
+    return state_tensor, max_prod, targets
+
+
+def coldStart(naf, env, coldstart_len, n_samples=100, learning_params={'compress': True}):
+    naf.train()  # Ensure we're in training mode
+    success = False
+    target_strat = 'half' #'zeros' if learning_params['compress'] else 'half'
+    print(target_strat)
+    for i in range(coldstart_len):
+        state_tensor, max_prod, targets = sample_states_and_max_prod(env, n_samples, target_strat)
+        actions = naf.actions(state_tensor, max_prod)
+        loss = naf.train_actions_coldstart(state_tensor, max_prod, targets)
+        print(i, "Action Loss", loss)
+        if i % 10000 == 0 and i > 0:
+            print("action", actions[:10].squeeze(1).cpu().numpy())
             print("target", targets[:10].squeeze(1).cpu().numpy())
-        if torch.allclose(values, targets, atol=0.2):
+        # TODO: tune atol
+        if torch.allclose(actions, targets, atol=0.005):
             success = True
             break
     if not success:
+        state_tensor, max_prod, targets = sample_states_and_max_prod(env, n_samples, target_strat)
+        print("WARNING actions did not converge")
+        print("action", naf.actions(state_tensor, max_prod)[:5])
+        print("target", targets[:5].squeeze(1).cpu().numpy())
+
+    success = False
+    for i in range(coldstart_len):
+        state_tensor, max_prod, targets = sample_states_and_max_prod(env, n_samples, target_strat='linear')
+
+        loss = naf.train_values_coldstart(state_tensor, targets)
+        print(i, "Value Loss", loss)
+        values = naf.value(state_tensor)
+        if i % 10000 == 0 and i > 0:
+            print("values", values[:10].squeeze(1).cpu().numpy())
+            print("target", targets[:10].squeeze(1).cpu().numpy())
+        # TODO: tune atol
+        mse = torch.mean((values - targets) ** 2).item()
+        if mse < .01:
+            success = True
+            break
+    if not success:
+        values = naf.value(state_tensor)
         print("WARNING values did not converge")
+        print("values", values[:10].squeeze(1).cpu().numpy())
+        print("target", targets[:10].squeeze(1).cpu().numpy())
+
     return naf
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class NAFApproximation(nn.Module):
-    def __init__(self, nnv, nnp, nnq, actiondim, learning_rate=1e-3, discount=0.99, compress=False):
+    def __init__(self, nnv, nnp, nnq, actiondim, learning_rate=1e-3, discount=0.99, compress=False, q_learning_rate=1e-2, v_learning_rate=1e-1):
         super(NAFApproximation, self).__init__()
         self.nnv = nnv.to(device)
         self.nnp = nnp.to(device)
@@ -98,9 +116,9 @@ class NAFApproximation(nn.Module):
             lr=learning_rate
         )
 
-        # TODO: make parameters
-        self.q_optimizer = torch.optim.Adam(self.nnq.parameters(), lr=1e-3)
-        self.v_optimizer = torch.optim.Adam(self.nnv.parameters(), lr=1e-1)
+        print("Q learning rate", q_learning_rate, "V learning rate", v_learning_rate)
+        self.q_optimizer = torch.optim.Adam(self.nnq.parameters(), lr=q_learning_rate)
+        self.v_optimizer = torch.optim.Adam(self.nnv.parameters(), lr=v_learning_rate)
 
 
         # TODO: clean up, only useful if we use _to_semi_definite instead of _build_L_matrix
@@ -135,14 +153,6 @@ class NAFApproximation(nn.Module):
         L[:, diag_idx, diag_idx] = diag
         return torch.bmm(L, L.transpose(1, 2))
 
-    def coldstart_action_loss(self, state, max_prod, target_action):
-        _, _, mu, _, _ = self.forward(state, target_action, max_prod)
-        return self.mse_loss(mu, target_action)
-
-    def coldstart_value_loss(self, env, state, target_value):
-        v = self.nnv(state)
-        return self.mse_loss(v, target_value)
-
     def action_penalty(self, mu, max_prod):
         mask_high = (mu > 0.8 * max_prod).float()
         mask_low = (mu < 0.2 * max_prod).float()
@@ -155,6 +165,15 @@ class NAFApproximation(nn.Module):
         L = self._build_L_matrix(tril_elements)
         return torch.bmm(L, L.transpose(1, 2))
 
+    def check_parameters(self, network_name, network):
+        for name, param in network.named_parameters():
+            if param.grad is not None:
+                grad_norm = param.grad.norm().item()
+                if grad_norm < 1e-6:
+                    print(f"[{network_name}, {name}] Gradient too small: {grad_norm:.2e}")
+                elif grad_norm > 1e2:
+                    print(f"[{network_name}, {name}] Gradient too large: {grad_norm:.2e}")
+
     def forward(self, state, action, max_prod):
         v = self.nnv(state)
 
@@ -164,8 +183,11 @@ class NAFApproximation(nn.Module):
         # bound the capital allocation to 0 to max_prod
         # TODO: handle multidimenstional mu
         if self.compress:
-            mu = ((torch.tanh(qout) + 1.0) / 2.0) * max_prod
+            import pdb;pdb.set_trace()
+            mu = torch.sigmoid(qout) * max_prod
+            #mu = ((torch.tanh(qout) + 1.0) / 2.0) * max_prod
         else:
+            assert False
             mu = qout
 
         diff = (action - mu).unsqueeze(1)
@@ -219,6 +241,15 @@ class NAFApproximation(nn.Module):
 
         self.optimizer.zero_grad()
         loss.backward()
+
+        # check parameters
+        self.check_parameters("nnv", self.nnv)
+        self.check_parameters("nnp", self.nnp)
+        self.check_parameters("nnq", self.nnq)
+
+        assert not torch.isnan(mu).any(), "mu exploded"
+        #assert not torch.isnan(P).any(), "P exploded"
+
         self.optimizer.step()
 
         return loss.item()

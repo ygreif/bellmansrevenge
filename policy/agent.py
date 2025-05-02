@@ -24,12 +24,8 @@ class FixedDeltaStrat(object):
 
     def explore(self, action, max_action):
         delta = random.uniform(-self.delta, self.delta)
-        if action + delta < .1 * max_action:
-            return action
-        elif action + delta > .9 * max_action:
-            return action
-        else:
-            return action + delta
+        noisy_action = action + delta
+        return np.clip(noisy_action, .1 * max_action, .9 * max_action)
 
 
 class RelativeRangeStrat(object):
@@ -44,15 +40,18 @@ class RelativeRangeStrat(object):
         self.minibatch_size = minibatch_size
 
     def explore(self, action, max_action):
-        action = action * random.uniform(self.lo, self.hi)
-        if action > .9 * max_action:
-            return random.uniform(.5, .9) * max_action
-        elif action < .1 * max_action:
-            return random.uniform(.1, .4) * max_action
-        elif action == np.nan:
-            return random.uniform(.1, .9) * max_action
-        else:
-            return action
+        noise = random.uniform(self.lo, self.hi)
+        perturbed = action * noise
+        return np.clip(perturbed, 0.01 * max_action, 0.99 * max_action)
+        #action = action * random.uniform(self.lo, self.hi)
+        #if action > .9 * max_action:
+        #    return random.uniform(.5, .9) * max_action
+        #elif action < .1 * max_action:
+        #    return random.uniform(.1, .4) * max_action
+        #elif action == np.nan:
+        #    return random.uniform(.1, .9) * max_action
+        #else:
+        #    return action
 
 
 class NoExploration(object):
@@ -86,9 +85,13 @@ class Agent(object):
 
             if debug:
                 print(action, original_action, state, max_prod, len(self.memory.samples))
-            if action['c'] <= 0 or max_prod <= 0:
+            if np.isnan(action['c']) or np.isnan(original_action):
+                print("NaN in action", action, "original", original_action)
                 return -99999
 
+            if action['c'] <= 0 or max_prod <= 0:
+                return -99999
+            assert max_prod > 0.01, f"max_prod too small: {max_prod}"
             utility, next_state = model.iterate(state, action)
             if utility == np.nan:
                 import pdb

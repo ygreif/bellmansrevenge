@@ -84,8 +84,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class NAFApproximation(nn.Module):
     def __init__(self, nnv, nnp, nnq, actiondim, learning_rate=1e-3, discount=0.99, compress=False):
         super(NAFApproximation, self).__init__()
-        import pdb;pdb.set_trace()
-        print(device)
         self.nnv = nnv.to(device)
         self.nnp = nnp.to(device)
         self.nnq = nnq.to(device)
@@ -95,13 +93,17 @@ class NAFApproximation(nn.Module):
         self.beta = discount
         self.gamma = torch.tensor(discount, dtype=torch.float32)
 
-        # Create optimizer (params from all subnets)
         self.optimizer = torch.optim.Adam(
             list(nnv.parameters()) + list(nnp.parameters()) + list(nnq.parameters()),
             lr=learning_rate
         )
 
-        # Precompute lower-triangular mask for L
+        # TODO: make parameters
+        self.q_optimizer = torch.optim.Adam(self.nnq.parameters(), lr=1e-3)
+        self.v_optimizer = torch.optim.Adam(self.nnv.parameters(), lr=1e-1)
+
+
+        # TODO: clean up, only useful if we use _to_semi_definite instead of _build_L_matrix
         mask = torch.ones(actiondim, actiondim)
         mask[torch.triu_indices(actiondim, actiondim)] = 0
         self.register_buffer("mask", mask)
@@ -141,20 +143,14 @@ class NAFApproximation(nn.Module):
         v = self.nnv(state)
         return self.mse_loss(v, target_value)
 
-    def train_step(self, state, action, max_prod, reward, next_state):
-        with torch.no_grad():
-            v_next = self.nnv(next_state)
-            target = reward + self.gamma * v_next
-
-        Q, _, _, _, _ = self.forward(state, action, max_prod)
-        loss = self.mse_loss(Q, target)
-
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        return loss.item()
+    def action_penalty(self, mu, max_prod):
+        mask_high = (mu > 0.8 * max_prod).float()
+        mask_low = (mu < 0.2 * max_prod).float()
+        penalty = (mask_high * mu + mask_low * (0.2 * max_prod - mu)).sum()
+        return penalty * 1e8
 
     def _calcP(self, state):
+        # calculate P using the _to_semi_definite
         tril_elements = self.nnp(state)  # recall a(a+1)/2
         L = self._build_L_matrix(tril_elements)
         return torch.bmm(L, L.transpose(1, 2))
@@ -165,22 +161,22 @@ class NAFApproximation(nn.Module):
         P = self._calcP(state)
 
         qout = self.nnq(state)
+        # bound the capital allocation to 0 to max_prod
+        # TODO: handle multidimenstional mu
         if self.compress:
             mu = ((torch.tanh(qout) + 1.0) / 2.0) * max_prod
         else:
             mu = qout
 
         diff = (action - mu).unsqueeze(1)
-        A = torch.bmm(torch.bmm(diff, P), diff.transpose(1, 2)).squeeze(2)  # (batch, 1)
-
-        #Q = v - A
+        A = torch.bmm(torch.bmm(diff, P), diff.transpose(1, 2)).squeeze(2)
         Q = v - .5 * A
 
         return Q, v, mu, A, P
 
     def action(self, x, max_prod):
         self.eval()
-        # TODO: inconsistent about when to covnert to device
+        # TODO: inconsistent about when to convert to device, I think I prefer converting in naf
         state_tensor = torch.tensor(x, dtype=torch.float32, device=device)
         max_prod_tensor = torch.tensor(max_prod, dtype=torch.float32, device=device)
 
@@ -218,8 +214,8 @@ class NAFApproximation(nn.Module):
 
         target = self.calcq(rewards, next_state)
 
-        Q, _, _, _, _ = self.forward(state, action, max_prod)
-        loss = self.mse_loss(Q, target)
+        Q, _, mu, _, _ = self.forward(state, action, max_prod)
+        loss = self.mse_loss(Q, target) + self.action_penalty(mu, max_prod)
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -229,7 +225,7 @@ class NAFApproximation(nn.Module):
 
     def train_actions_coldstart(self, state, max_prod, target_action):
         self.nnq.train()
-        self.optimizer.zero_grad()
+        self.q_optimizer.zero_grad()
 
         qout = self.nnq(state)
         if self.compress:
@@ -239,19 +235,19 @@ class NAFApproximation(nn.Module):
 
         loss = self.mse_loss(mu, target_action)
         loss.backward()
-        self.optimizer.step()
+        self.q_optimizer.step()
 
         return loss.item()
 
     def train_values_coldstart(self, state, target_value):
         self.nnv.train()
-        self.optimizer.zero_grad()
+        self.v_optimizer.zero_grad()
 
         v = self.nnv(state)
         loss = self.mse_loss(v, target_value)
 
         loss.backward()
-        self.optimizer.step()
+        self.v_optimizer.step()
 
         return loss.item()
 
@@ -261,6 +257,7 @@ class NAFApproximation(nn.Module):
     def restore(self, checkpoint_file):
         self.load_state_dict(torch.load(checkpoint_file))
 
+    # Diagnostic functions
     def renderBestA(self, include_best=True):
         state = [(x, 0) for x in np.arange(0, 1.0, .01)]
         state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device)
@@ -293,9 +290,9 @@ class NAFApproximation(nn.Module):
         plt.close()
 
     def renderQ(self):
-        self.eval()  # Set to evaluation mode
+        self.eval()
 
-        # Define fixed state
+        # Render Q for capital level .4, productivity 0
         state = (0.4, 0)
         mprod = math.pow(state[0], 1.0 / 3.0) * 0.9792
 

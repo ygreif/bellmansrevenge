@@ -82,11 +82,12 @@ class NeuralGrid:
         c = torch.minimum(action.view(-1), max_prod.view(-1))
         rewards = torch.log(c).unsqueeze(1)
 
-        next_states, probs = compute_transition_outcomes(state, action, max_prod, self.env.motion.transition)
+        next_states, probs = compute_transition_outcomes(state, action, max_prod, self.env.motion.transition, self.env)
 
         B, Z, _ = next_states.shape
+        # TODO use env to unnormalize, constants for k and z
         k_next_norm = next_states[..., 0] - 0.5
-        z_next_norm = next_states[..., 1] / 4.0 - 0.5
+        z_next_norm = next_states[..., -1] / 4.0 - 0.5
         next_states_norm = torch.stack([k_next_norm, z_next_norm], dim=2)
         next_states_flat = next_states_norm.view(B * Z, 2)
         next_values_flat = self.critic_target(next_states_flat)           # shape [B*Z, 1]

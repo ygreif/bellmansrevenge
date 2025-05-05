@@ -2,7 +2,7 @@ import math
 import random
 
 import numpy as np
-
+import torch
 
 class CobbDouglass(object):
 
@@ -103,6 +103,12 @@ class GrowthEconomy(object):
         states[:, 0] -= .5
         states[:, 1] = states[:, 1] / 4 - .5
         return states
+
+    def unnormalize_tensor(self, states):
+        return torch.stack([
+            states[:, 0] + 0.5,
+            (states[:, 1] + 0.5) * 4
+        ], dim=1)
 
     @property
     def alpha(self):

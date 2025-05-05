@@ -97,12 +97,11 @@ class Agent(object):
                 import pdb
                 pdb.set_trace()
             if train and len(self.memory.samples) > strat.minibatch_size:
-                batch = self.memory.batch(strat.minibatch_size).to_torch(device=q.device)
+                batch = self.memory.batch(strat.minibatch_size) #.to_torch(device=q.device)
                 q.trainstep(batch.state, batch.action, batch.max_prod,
                             batch.reward, batch.next_state)
 
-            self.memory.append(
-                state, next_state, action, utility, max_prod, original_action)
+            self.memory.append(state, next_state, action, utility, max_prod, original_action)
             reward += utility * discount
             discount *= q.beta
             state = next_state

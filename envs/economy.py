@@ -50,7 +50,7 @@ class Motion(object):
         return np.random.choice(self.levels, p=self.transition[z, ])
 
     def distribution(self, k, z):
-        return [p for p in self.transition[z, ] if p > 0]
+        return [p for p in self.transition[z, ]]
 
 
 class GrowthEconomy(object):
@@ -60,6 +60,9 @@ class GrowthEconomy(object):
         self.production = production
         self.motion = motion
 
+    def max_prod(self, state):
+        return self.production.production(**state)
+
     def iterate(self, instate, action):
         p = self.production.production(**instate)
         action['c'] = min(action['c'], p)
@@ -67,28 +70,47 @@ class GrowthEconomy(object):
         next_capital = max(p - action['c'], 0.0)
         return utility, {'k': next_capital, 'z': self.motion.next(**instate)}
 
+    def iterate1d(self, instate, action):
+        action = action[0]
+        p = self.production.production(**instate)
+        action = min(action, p)
+        utility = self.utility.utility(action)
+        next_capital = max(p - action, 0.0)
+        return utility, {'k': next_capital, 'z': self.motion.next(**instate)}
+
     def distribution(self, instate, action):
         p = self.production.production(**instate)
         action['c'] = min(action['c'], p)
         utility = self.utility.utility(**action)
         next_capital = max(p - action['c'], 0.0)
-        return utility, [{'k': next_capital, 'z': z, 'p': p} for z, p in enumerate(self.motion.distribution(**instate))]
+        return utility, [{'k': next_capital, 'z': z, 'p': p} for z, p in enumerate(self.motion.distribution(**instate)) if p > 0]
 
     def shape(self):
         return (2, 1)
 
     def sample_state(self):
         state = {
-            'k': random.random(), 'z': random.randrange(len(self.production))}
+            'k': math.sqrt(random.random()), 'z': random.randrange(len(self.production))}
         return state
 
-#    def action_loss(self, action):
-#        import tensorflow as tf
-#        tf.cond(tf.greater(0, action), tf.abs(action), 0)
-    '''
-    def dist_to_valid(self, tf, action, state):
-        return tf.cond(action < 0.0, tf.abs(action), 0.0) + tf.cond(action > state[0], action, 0.0)
-'''
+    def normalize_state_from_dict(self, state):
+        return self.normalize_state((state['k'], state['z']))
+
+    def normalize_state(self, state):
+        return (state[0] - .5, state[1] / 4 - .5)
+
+    def normalize_tensor(self, states):
+        states[:, 0] -= .5
+        states[:, 1] = states[:, 1] / 4 - .5
+        return states
+
+    @property
+    def alpha(self):
+        return self.production.alpha
+
+    @property
+    def delta(self):
+        return self.production.delta
 
 vProductivity = np.array([0.9792, 0.9896, 1.0000, 1.0106, 1.0212], float)
 mTransition = np.array([[0.9727, 0.0273, 0.0000, 0.0000, 0.0000],
@@ -96,8 +118,9 @@ mTransition = np.array([[0.9727, 0.0273, 0.0000, 0.0000, 0.0000],
                         [0.0000, 0.00815, 0.9837, 0.00815, 0.0000],
                         [0.0000, 0.0000, 0.0153, 0.9806, 0.0041],
                         [0.0000, 0.0000, 0.0000, 0.0273, 0.9727]], float)
+
 alpha = 1.0 / 3.0
-delta = 1.0
+delta = 1.0 # capital decay
 prod = Production(alpha, delta, vProductivity)
 motion = Motion(mTransition)
 jesusfv = GrowthEconomy(LogUtility(), prod, motion)

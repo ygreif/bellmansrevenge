@@ -28,6 +28,24 @@ class FixedDeltaStrat(object):
         return np.clip(noisy_action, .1 * max_action, .9 * max_action)
 
 
+class GaussianNoiseStrategy:
+    def __init__(self, initial_std=0.2, final_std=0.02, decay=0.995, max_iters=20, minibatch_size=500):
+        self.std = initial_std
+        self.final_std = final_std
+        self.decay = decay
+        self.max_iters = max_iters
+        self.minibatch_size = minibatch_size
+
+    def explore(self, action, max_action):
+        noise = np.random.normal(0, self.std, size=np.shape(action))
+        noisy = action + noise
+        clipped = np.clip(noisy, 0.05 * max_action, 0.95 * max_action)
+        return clipped
+
+    def decay_std(self):
+        self.std = max(self.final_std, self.std * self.decay)
+
+
 class RelativeRangeStrat(object):
 
     def __init__(self, lo, hi, max_iters, minibatch_size=500):

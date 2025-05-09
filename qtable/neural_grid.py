@@ -157,3 +157,45 @@ class NeuralGrid:
                 print(i, loss.item())
                 print(f"[{i}] predicted mean: {actions.mean().item():.4f}, target mean: {target_actions.mean().item():.4f}, loss: {loss.item():.4f}")
             self.actor_optimizer.step()
+
+    def train_values_coldstart(self, n_iters=250, batch_size=1000, print_every=250):
+        tau_backup = self.tau
+        self.tau = 1.0
+        for step in range(0, n_iters):
+            value_loss = self.value_step(batch_size=batch_size)
+
+            if step % print_every == 0 or step == 1:
+                print(f"[Critic Pretraining Step {step}] value loss = {value_loss:.6f}")
+        self.critic_target = copy.deepcopy(self.critic)
+        self.tau = tau_backup
+
+    # trainstep for RL with an agent
+    def trainstep(self, state, action, max_prod, reward, next_state):
+        state_tensor = self._states_to_tensor(state, from_dict=False)
+        action_tensor = self._as_tensor(action)
+        max_prod_tensor = self._as_tensor(max_prod)
+        reward_tensor = self._as_tensor(reward)
+        next_state_tensor = self._states_to_tensor(next_state, from_dict=False)
+
+        # critic update
+        with torch.no_grad():
+            next_actions = self.actions(next_state_tensor, max_prod_tensor, clamp=True)
+            target_q = reward_tensor + self.beta * self.q(next_state_tensor, next_actions, max_prod_tensor)
+        current_q = self.q(state_tensor, action_tensor, max_prod_tensor)
+        critic_loss = self.mse_loss(current_q, target_q)
+
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
+
+        # actor update
+        actions = self.actions(state_tensor, max_prod_tensor, clamp=False)
+        actor_loss = -self.q(state_tensor, actions, max_prod_tensor).mean()
+        actor_loss += self.action_penalty(actions, max_prod_tensor)
+
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
+
+        # update target network
+        neuralnetwork.soft_update(self.critic_target, self.critic, self.tau)

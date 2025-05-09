@@ -9,7 +9,7 @@ def convergence(q, memory, size=100, delta=.01):
         return False
     batch = memory.recent(size)
     with torch.no_grad():
-        actions = q.actions(batch.state, batch.max_prod)
+        actions = q.actions(batch.state, batch.max_prod, normalize=True)
 
     error = 0
     for i in range(size):
@@ -73,8 +73,7 @@ def euler_error(q, model, iters, state=None):
                 / dUtility
                 * (1 - model.production.delta + dProdPrime)
             )
-
-        error+= abs(eps)
+        error += abs(eps)
         _, state = model.iterate(state, action)
 
     return error / iters

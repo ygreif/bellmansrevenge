@@ -237,8 +237,9 @@ def renderV(q):
 
     plt.plot(x_vals, v_vals)
     plt.title("v over range")
-    plt.waitforbuttonpress(0)
-    plt.close()
+    #plt.waitforbuttonpress(0)
+    #plt.close()
+    return plt
 
 def render_v_vs_target(q):
     x_vals = np.arange(0.0, 1.0, 0.01)

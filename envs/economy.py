@@ -55,10 +55,11 @@ class Motion(object):
 
 class GrowthEconomy(object):
 
-    def __init__(self, utility, production, motion):
+    def __init__(self, utility, production, motion, uniform_sampling=True):
         self.utility = utility
         self.production = production
         self.motion = motion
+        self.uniform_sampling = uniform_sampling
 
     def max_prod(self, state):
         return self.production.production(**state)
@@ -89,9 +90,10 @@ class GrowthEconomy(object):
         return (2, 1)
 
     def sample_state(self):
-        state = {
-            'k': math.sqrt(random.random()), 'z': random.randrange(len(self.production))}
-        return state
+        if self.uniform_sampling:
+            return {'k': random.random(), 'z': random.randrange(len(self.production))}
+        else:
+            return {'k': math.sqrt(random.random()), 'z': random.randrange(len(self.production))}
 
     def normalize_state_from_dict(self, state):
         return self.normalize_state((state['k'], state['z']))

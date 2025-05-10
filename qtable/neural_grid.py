@@ -142,7 +142,8 @@ class NeuralGrid:
         self.actor_optimizer.step()
         return loss.item()
 
-    def train_actions_cold_start(self, batch_size=1000, n_iters=50):
+    def train_actions_cold_start(self, batch_size=1000, n_iters=100):
+        print("Training actions coldstart")
         for i in range(n_iters):
             states = [self.env.sample_state() for _ in range(batch_size)]
             max_prods_tensor = self._as_tensor([self.env.max_prod(s) for s in states])

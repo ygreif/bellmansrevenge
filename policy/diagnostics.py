@@ -41,14 +41,18 @@ def value_error(q, model, iters, state=False):
         _, next_state = model.iterate(state, action)
     return error / iters
 
-def euler_error(q, model, iters, state=None):
+def euler_error(q, model, iters, state=None, debug=False, clip=False):
     if state is None:
         state = model.sample_state()
 
     error = 0.0
-    for _ in range(iters):
+    for i in range(iters):
         max_prod = model.production.production(**state)
         c = q.action([samples.dict_to_tuple(state)], [(max_prod,)], clamp=True)[0]
+        if clip:
+            c = max(c, .05 * max_prod)
+            c = min(c, .95 * max_prod)
+
         action = {'c': c}
         utility, next_states = model.distribution(state, action)
         states = [samples.sample_to_state_tuple(s) for s in next_states]
@@ -73,6 +77,8 @@ def euler_error(q, model, iters, state=None):
                 / dUtility
                 * (1 - model.production.delta + dProdPrime)
             )
+        if debug:
+            print('iter', i, 'eps', eps, 'k', state['k'], 'z', state['z'])
         error += abs(eps)
         _, state = model.iterate(state, action)
 

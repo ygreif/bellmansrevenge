@@ -30,10 +30,18 @@ class Production(object):
         self.delta = delta
         self.technology = technology
 
-    def production(self, k, z, **kwargs):
-        return self.technology[z] * math.pow(k, self.alpha) + (1.0 - self.delta) * k
+    def production(self, k, z, d=False, **kwargs):
+        if not d:
+            delta = self.delta
+        else:
+            delta = d
+        return self.technology[z] * math.pow(k, self.alpha) + (1.0 - delta) * k
 
-    def derivative(self, k, z, **kwargs):
+    def derivative(self, k, z, d=False, **kwargs):
+        if not d:
+            delta = self.delta
+        else:
+            delta = d
         return self.technology[z] * self.alpha * math.pow(k, self.alpha - 1.0) + (1.0 - delta)
 
     def __len__(self):
@@ -46,10 +54,10 @@ class Motion(object):
         self.transition = transition
         self.levels = range(len(transition[0, ]))
 
-    def next(self, k, z):
+    def next(self, k, z, d=1.0):
         return np.random.choice(self.levels, p=self.transition[z, ])
 
-    def distribution(self, k, z):
+    def distribution(self, k, z, d=1.0):
         return [p for p in self.transition[z, ]]
 
 
@@ -102,9 +110,10 @@ class GrowthEconomy(object):
         return (state[0] - .5, state[1] / 4 - .5)
 
     def normalize_tensor(self, states):
-        states[:, 0] -= .5
-        states[:, 1] = states[:, 1] / 4 - .5
-        return states
+        return torch.stack([
+            states[:, 0] - 0.5,
+            states[:, -1] / 4.0 - 0.5
+        ], dim=1)
 
     def unnormalize_tensor(self, states):
         return torch.stack([
@@ -120,6 +129,66 @@ class GrowthEconomy(object):
     def delta(self):
         return self.production.delta
 
+
+class RandomDeltaGrowthEconomy(GrowthEconomy):
+
+    def __init__(self, utility, production, motion, uniform_sampling=True):
+        super().__init__(utility, production, motion, uniform_sampling)
+
+    def iterate(self, instate, action):
+        p = self.production.production(**instate)
+        action['c'] = min(action['c'], p)
+        utility = self.utility.utility(**action)
+        next_capital = max(p - action['c'], 0.0)
+        d = instate['d']
+        return utility, {'k': next_capital, 'd': d, 'z': self.motion.next(**instate)}
+
+    def distribution(self, instate, action):
+        p = self.production.production(**instate)
+        action['c'] = min(action['c'], p)
+        utility = self.utility.utility(**action)
+        next_capital = max(p - action['c'], 0.0)
+        d = instate['d']
+        return utility, [{'k': next_capital, 'd': d, 'z': z, 'p': p} for z, p in enumerate(self.motion.distribution(**instate)) if p > 0]
+
+    def shape(self):
+        return (3, 1)
+
+    def iterate1d(self, instate, action):
+        action = action[0]
+        p = self.production.production(**instate)
+        action = min(action, p)
+        utility = self.utility.utility(action)
+        next_capital = max(p - action, 0.0)
+        d = instate['d']
+        return utility, {'k': next_capital, 'd': d, 'z': self.motion.next(**instate)}
+
+    def sample_state(self):
+        # don't use in parallel!
+        delta = random.random() * .2 + .8
+        return {'k': math.sqrt(random.random()), 'd': delta, 'z': random.randrange(len(self.production))}
+
+    def normalize_state_from_dict(self, state):
+        return self.normalize_state((state['k'], state['d'], state['z']))
+
+    def normalize_state(self, state):
+        return (state[0] - .5, state[1] - .9, state[2] / 4 - .5)
+
+    def normalize_tensor(self, states):
+        return torch.stack([
+            states[:, 0] - 0.5,
+            states[:, 1] - 0.9,
+            states[:, 2] / 4.0 - 0.5
+        ], dim=1)
+
+    def unnormalize_tensor(self, states):
+        return torch.stack([
+            states[:, 0] + 0.5,
+            (states[:, 1] + .9),
+            (states[:, 2] + 0.5) * 4
+        ], dim=1)
+
+
 vProductivity = np.array([0.9792, 0.9896, 1.0000, 1.0106, 1.0212], float)
 mTransition = np.array([[0.9727, 0.0273, 0.0000, 0.0000, 0.0000],
                         [0.0041, 0.9806, 0.0153, 0.0000, 0.0000],
@@ -132,6 +201,7 @@ delta = 1.0 # capital decay
 prod = Production(alpha, delta, vProductivity)
 motion = Motion(mTransition)
 jesusfv = GrowthEconomy(LogUtility(), prod, motion)
+extended_jesusfv = RandomDeltaGrowthEconomy(LogUtility(), prod, motion)
 
 if __name__ == '__main__':
     state = jesusfv.sample_state()

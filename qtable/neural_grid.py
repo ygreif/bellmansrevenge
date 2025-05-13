@@ -78,7 +78,24 @@ class NeuralGrid:
         else:
             return self._as_tensor( [self.env.normalize_state(s) for s in lst])
 
+
     def q(self, state, action, max_prod):
+#        print(f"Action.shape {action.shape}")
+        c = torch.minimum(action.view(-1), max_prod.view(-1))
+        rewards = torch.log(c + eps).unsqueeze(1)
+
+        next_states, probs = compute_transition_outcomes(state, action, max_prod, self.env.motion.transition, self.env)
+
+        B, Z, D = next_states.shape
+        next_states_flat = next_states.reshape(B * Z, D)
+        next_states_norm = self.env.normalize_tensor(next_states_flat)
+        next_values_flat = self.critic_target(next_states_norm)
+        next_values = next_values_flat.view(B, Z, 1)
+
+        expected_value = (probs.unsqueeze(2) * next_values).sum(dim=1)
+        return rewards + self.beta * expected_value
+
+    def old_q_that_worked(self, state, action, max_prod):
         c = torch.minimum(action.view(-1), max_prod.view(-1))
         rewards = torch.log(c).unsqueeze(1)
 

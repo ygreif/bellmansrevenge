@@ -229,9 +229,17 @@ def renderQ(q):
     plt.legend()
     return plt
 
+def _get_state_range(q):
+    x_vals = np.arange(0, 1.0, 0.01)
+    if q.env.shape()[0] == 2:
+        return [(x, 0) for x in x_vals]
+    else:
+        return [(x, 1.0, 0) for x in x_vals]
+
+
 def renderV(q):
     x_vals = np.arange(0, 1.0, 0.01)
-    states = torch.tensor([[x, 0] for x in x_vals], dtype=torch.float32)
+    states = torch.tensor(_get_state_range(q), dtype=torch.float32) #torch.tensor([[x, 0] for x in x_vals], dtype=torch.float32)
 
     v_vals = q.values_unnormalized(states).squeeze(1).detach().numpy()
 
@@ -243,7 +251,7 @@ def renderV(q):
 
 def render_v_vs_target(q):
     x_vals = np.arange(0.0, 1.0, 0.01)
-    state_tuples = [(x, 0.0) for x in x_vals]
+    state_tuples = _get_state_range(q)
     states = torch.as_tensor(state_tuples, device=q.device, dtype=torch.float32)
 
     v_online = q.values_unnormalized(states, False).detach().cpu().numpy().squeeze()
@@ -256,13 +264,14 @@ def render_v_vs_target(q):
     return plt
 
 def renderBestA(q, include_best=True):
-    state = [(x, 0) for x in np.arange(0, 1.0, .01)]
+    state = _get_state_range(q)
     state_tensor = torch.tensor(state, dtype=torch.float32, device=q.device)
     max_prod = [(math.pow(s[0], 1.0 / 3.0) * .9792,) for s in state]
     max_prod_tensor = torch.tensor(max_prod, dtype=torch.float32, device=q.device)
 
     actions = q.actions_unnormalized(state_tensor, max_prod_tensor, clamp=False)
     # when delta=1 there is a closed for solution here (pg 4 https://www.sas.upenn.edu/~jesusfv//comparison_languages.pdf)
+    # todo use the env to get these parameters
     best = [p[0] * (1 - 1.0 / 3.0 * .95) for p in max_prod]
 
     plt.plot([s[0] for s in state], actions.cpu().detach().numpy(), label="action")

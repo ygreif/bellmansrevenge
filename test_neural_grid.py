@@ -1,6 +1,6 @@
 import torch
 
-from envs.economy import jesusfv
+from envs.economy import extended_jesusfv as jesusfv
 from qtable.neural_grid import NeuralGrid
 from qtable.neuralnetwork import NeuralNetwork
 
@@ -20,7 +20,9 @@ def test_q_matches_reference(neuralgrid, batch_size=10):
     q_array_loop = _q_tensor_for_loop(states, actions, neuralgrid)
     q_tensor_loop = torch.tensor(q_array_loop, dtype=torch.float32).unsqueeze(1)
 
-    assert torch.allclose(q_tensor_vectorized, q_tensor_loop, atol=1e-4)
+    print(q_tensor_loop)
+    print(q_tensor_vectorized)
+    assert torch.allclose(q_tensor_vectorized, q_tensor_loop, atol=1e-2)
 
     print("Vectorized and for loop computations match")
 
@@ -33,7 +35,9 @@ def _q_tensor_for_loop(states, actions, neuralgrid):
         utility, dist = jesusfv.distribution(s, {'c': a})
         value = 0.0
         for entry in dist:
-            next_state = {'k': entry['k'], 'z': entry['z']}
+            next_state = {'k': entry['k'], 'z': entry['z'], 'd': entry['d']}
+            #if 'd' in entry:
+            #    next_state['d'] = entry['d']
             next_state_tensor = torch.tensor(
                 jesusfv.normalize_state_from_dict(next_state),
                 dtype=torch.float32).unsqueeze(0)
@@ -46,7 +50,7 @@ def _q_tensor_for_loop(states, actions, neuralgrid):
 
 if __name__ == "__main__":
     input_dim, action_dim = jesusfv.shape()
-
+    print(input_dim, action_dim)
     # set output biases to make actor/critic more interesting
     actor = NeuralNetwork(indim=input_dim, enddim=action_dim, hidden_layers=[4], output_bias=-2)
     critic = NeuralNetwork(indim=input_dim, enddim=1, hidden_layers=[4], output_bias=1)

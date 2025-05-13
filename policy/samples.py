@@ -5,7 +5,11 @@ import numpy
 import torch
 
 def dict_to_tuple(d):
-    return tuple(v for _, v in d.items())
+    lst = []
+    for k in ['c', 'k', 'd', 'z']:
+        if k in d:
+            lst.append(d[k])
+    return tuple(lst)
 
 
 def sample_to_state_tuple(s):

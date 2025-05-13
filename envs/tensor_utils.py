@@ -3,7 +3,7 @@ import numpy as np
 
 from .economy import jesusfv
 
-def compute_transition_outcomes(state, action, max_prod, transition_matrix, env=jesusfv):
+def compute_transition_outcomes(state, action, max_prod, transition_matrix, env):
     """
     Args:
         state: (B, D) tensor, normalized, assume last
@@ -21,7 +21,6 @@ def compute_transition_outcomes(state, action, max_prod, transition_matrix, env=
 
     state = env.unnormalize_tensor(state)
 
-    # unnormalize the state (TODO: use env for this)
     k = state[:, 0]
     z = state[:, -1].long()
 
@@ -53,6 +52,7 @@ def compute_transition_outcomes(state, action, max_prod, transition_matrix, env=
 
 def test_compute_transition_outcomes():
     from economy import jesusfv, mTransition
+    from economy import extended_jesusfv as jesusfv
 
     B = 3
     states = [jesusfv.sample_state() for _ in range(B)]
@@ -64,7 +64,7 @@ def test_compute_transition_outcomes():
     max_prod_tensor = torch.tensor([[m] for m in max_prods], dtype=torch.float32)
 
     # vectorized version
-    next_states, probs = compute_transition_outcomes(state_tensor, action_tensor, max_prod_tensor, mTransition)
+    next_states, probs = compute_transition_outcomes(state_tensor, action_tensor, max_prod_tensor, mTransition, jesusfv)
 
     # check for loop version
     for i in range(B):
@@ -75,7 +75,10 @@ def test_compute_transition_outcomes():
             expected_z = entry['z']
             expected_p = entry['p']
 
-            actual_k, actual_z = next_states[i, expected_z]
+            if len(next_states[i, expected_z]) > 2:
+                actual_k, _, actual_z = next_states[i, expected_z]
+            else:
+                actual_k, actual_z = next_states[i, expected_z]
             actual_p = probs[i, expected_z]
             assert abs(actual_k.item() - expected_k) < 1e-6, f"k mismatch at {i},{expected_z}"
             assert abs(actual_z.item() - expected_z) < 1e-6, f"z mismatch at {i},{expected_z}"

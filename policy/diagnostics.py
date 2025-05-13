@@ -1,6 +1,8 @@
 import numpy as np
 import torch
 
+import math
+import matplotlib.pyplot as plt
 from policy import samples
 
 
@@ -27,8 +29,7 @@ def value_error(q, model, iters, state=False):
         action = {
             'c': q.action([samples.dict_to_tuple(state)], [(max_prod,)])[0]}
         utility, next_states = model.distribution(state, action)
-        states = [state] + [{'k': next_state['k'], 'z': next_state['z']}
-                            for next_state in next_states]
+        states = [state] + next_states
         states = [samples.dict_to_tuple(s) for s in states]
         states = torch.tensor(states, dtype=torch.float32, device=q.device)
 
@@ -41,7 +42,7 @@ def value_error(q, model, iters, state=False):
         _, next_state = model.iterate(state, action)
     return error / iters
 
-def euler_error(q, model, iters, state=None, debug=False, clip=False):
+def euler_error(q, model, iters, state=None, debug=False, clip=False, print_every=50):
     if state is None:
         state = model.sample_state()
 
@@ -55,7 +56,9 @@ def euler_error(q, model, iters, state=None, debug=False, clip=False):
 
         action = {'c': c}
         utility, next_states = model.distribution(state, action)
-        states = [samples.sample_to_state_tuple(s) for s in next_states]
+        #import pdb;pdb.set_trace()
+        #states = [samples.sample_to_state_tuple(s) for s in next_states]
+        states = [samples.dict_to_tuple(s) for s in next_states]
         max_prods = [(model.production.production(**s),) for s in next_states]
 
         state_tensor = torch.tensor(states, dtype=torch.float32, device=q.device)
@@ -77,12 +80,44 @@ def euler_error(q, model, iters, state=None, debug=False, clip=False):
                 / dUtility
                 * (1 - model.production.delta + dProdPrime)
             )
-        if debug:
+        if debug and i % print_every == 0:
             print('iter', i, 'eps', eps, 'k', state['k'], 'z', state['z'])
         error += abs(eps)
         _, state = model.iterate(state, action)
 
     return error / iters
+
+def evaluate_euler_error_grid(q, model, k_vals=None, z_vals=None, delta_vals=None, debug=False, clip=True):
+    if k_vals is None:
+        # focus on low values of k
+        k_vals = np.logspace(-2, 0, 20, base=10)
+        k_vals = np.clip(k_vals, 0.01, 0.99)
+    if z_vals is None:
+        z_vals = list(range(len(model.production.technology)))
+    if delta_vals is None:
+        delta_vals = np.linspace(0.8, 1.0, 10)
+
+    for z in z_vals:
+        error_grid = np.zeros((len(k_vals), len(delta_vals)))
+
+        for i, k in enumerate(k_vals):
+            for j, delta in enumerate(delta_vals):
+                state = {'k': k, 'z': z, 'd': delta}
+                err = euler_error(q, model, iters=1, state=state, debug=False, clip=clip)
+                error_grid[i, j] = math.log(err)
+                if debug and err > 0.1:
+                    print(f"[z={z}] k={k:.2f}, delta={delta:.2f}, error={err:.4f}")
+
+        plt.figure(figsize=(8, 6))
+        plt.imshow(error_grid, extent=[delta_vals[0], delta_vals[-1], k_vals[0], k_vals[-1]],
+                   aspect='auto', origin='lower', cmap='viridis')
+        plt.colorbar(label='Euler Error')
+        plt.title(f'Euler Error Heatmap (z={z})')
+        plt.xlabel('Delta')
+        plt.ylabel('Capital (k)')
+        plt.tight_layout()
+        plt.show()
+
 
 def naf_debug_diagnostics(naf, env, n_samples=50):
     """

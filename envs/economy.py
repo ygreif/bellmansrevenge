@@ -129,7 +129,7 @@ class GrowthEconomy(object):
     def delta(self):
         return self.production.delta
 
-
+# TODO unify RandomDeltagrowtheconomy and Growtheconomy
 class RandomDeltaGrowthEconomy(GrowthEconomy):
 
     def __init__(self, utility, production, motion, uniform_sampling=True):
@@ -166,7 +166,7 @@ class RandomDeltaGrowthEconomy(GrowthEconomy):
     def sample_state(self):
         # don't use in parallel!
         delta = random.random() * .2 + .8
-        return {'k': math.sqrt(random.random()), 'd': delta, 'z': random.randrange(len(self.production))}
+        return {'k':random.random(), 'd': delta, 'z': random.randrange(len(self.production))}
 
     def normalize_state_from_dict(self, state):
         return self.normalize_state((state['k'], state['d'], state['z']))
